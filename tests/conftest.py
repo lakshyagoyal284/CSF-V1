@@ -61,24 +61,86 @@ def loaded(model_path):
     return ModelRegistry(model_path).get()
 
 
+#: Legacy scoring routes are banker-only. The test client below injects a
+#: banker token for these URLs so the pre-existing scoring tests stay concise,
+#: while `client.raw` still exercises the real unauthenticated behaviour.
+_LEGACY_PROTECTED = (
+    "/api/score",
+    "/api/simulate",
+    "/api/assessment-history",
+    "/api/admin/reload-model",
+)
+
+
+class AuthenticatedTestClient:
+    """Thin TestClient proxy that attaches a banker token to scoring routes."""
+
+    def __init__(self, client, token: str) -> None:
+        self._client = client
+        self._token = token
+
+    @property
+    def raw(self):
+        """The unwrapped client, for tests that assert authorisation failures."""
+        return self._client
+
+    def _call(self, method: str, url: str, **kwargs):
+        if url.startswith(_LEGACY_PROTECTED):
+            headers = dict(kwargs.pop("headers", {}) or {})
+            headers.setdefault("Authorization", f"Bearer {self._token}")
+            kwargs["headers"] = headers
+        return getattr(self._client, method)(url, **kwargs)
+
+    def get(self, url: str, **kwargs):
+        return self._call("get", url, **kwargs)
+
+    def post(self, url: str, **kwargs):
+        return self._call("post", url, **kwargs)
+
+    def delete(self, url: str, **kwargs):
+        return self._call("delete", url, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._client, name)
+
+
 @pytest.fixture(scope="session")
-def client(model_path):
-    """FastAPI test client wired to the throwaway model."""
+def client(model_path, tmp_path_factory):
+    """FastAPI test client wired to a throwaway model and portal database."""
+    portal_dir = tmp_path_factory.mktemp("portal")
     os.environ["ACS_MODEL_PATH"] = str(model_path)
     os.environ.pop("ACS_DATABASE_URL", None)
+    # Keep the demo database and uploads out of the repository.
+    os.environ["ACS_PORTAL_DATABASE_URL"] = f"sqlite:///{(portal_dir / 'agritrust.db').as_posix()}"
+    os.environ["ACS_UPLOAD_DIR"] = str(portal_dir / "uploads")
+    os.environ["ACS_JWT_SECRET"] = "test-only-jwt-secret-at-least-32-bytes-long"
+    os.environ["ACS_PORTAL_SEED_DEMO"] = "true"
 
     from backend.config import get_settings
     from backend.model_registry import reset_registry
+    from backend.portal_db import reset_portal_state
+    from backend.storage import reset_storage
 
     get_settings.cache_clear()
     reset_registry()
+    reset_portal_state()
+    reset_storage()
 
     from fastapi.testclient import TestClient
 
     from backend.main import app
 
     with TestClient(app) as test_client:
-        yield test_client
+        login = test_client.post(
+            "/api/auth/login",
+            json={"email": "banker@agritrust.ai", "password": "Banker@123"},
+        )
+        assert login.status_code == 200, login.text
+        token = login.json()["access_token"]
+        yield AuthenticatedTestClient(test_client, token)
+
+    reset_portal_state()
+    reset_storage()
 
 
 def base_application() -> dict:

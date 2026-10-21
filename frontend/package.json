@@ -6,10 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "verify:portal": "node scripts/verify-portal.mjs"
   },
   "dependencies": {
     "next": "16.4.2",
+    "puppeteer-core": "^25.14.0",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },

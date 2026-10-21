@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 import platform
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -27,7 +27,6 @@ from typing import Any
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.neural_network import MLPClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import (
     average_precision_score,
@@ -37,6 +36,7 @@ from sklearn.metrics import (
     roc_curve,
 )
 from sklearn.model_selection import train_test_split
+from xgboost import XGBClassifier
 
 from ml import __version__
 from ml.config import (
@@ -68,13 +68,10 @@ LEAKED_COLUMNS = ("latent_repayment_probability",)
 #: Frozen hyper-parameters. Shallow trees + row/column subsampling keep the
 #: model well-behaved on a few thousand rows and resistant to overfitting.
 #: A model trained on real bureau data would use a proper search + calibration.
-#: Chosen by a small measured sweep over the synthetic portfolio (depth/learning
-#: rate/regularisation), picking the most regularised setting among those whose
-#: hold-out AUC was statistically indistinguishable, to keep the train-test gap
-#: small. ``n_estimators`` is only an upper bound: early stopping picks the
-#: actual tree count, which is then refit consistently (see :func:`train_model`).
+#: ``n_estimators`` is only an upper bound: early stopping picks the actual
+#: tree count, which is then refit consistently (see :func:`train_model`).
 XGB_PARAMS: dict[str, Any] = {
-    "n_estimators": 50,
+    "n_estimators": 300,
     "learning_rate": 0.03,
     "max_depth": 4,
     "min_child_weight": 6,
@@ -99,7 +96,7 @@ ARTIFACT_SCHEMA_VERSION = 1
 class TrainingResult:
     """Everything the caller needs to know about a training run."""
 
-    model: MLPClassifier
+    model: XGBClassifier
     imputer: SimpleImputer
     metrics: dict[str, Any]
     data_report: dict[str, Any]
@@ -126,7 +123,7 @@ def load_portfolio(
     n_records: int = DEFAULT_N_RECORDS,
     seed: int = DEFAULT_SEED,
     repayment_rate: float = DEFAULT_REPAYMENT_RATE,
-    early_stopping_patience: int = 60,
+    early_stopping_patience: int = 250,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """Load the synthetic portfolio from disk, generating it when needed.
 
@@ -255,7 +252,7 @@ def train_model(
     test_size: float = 0.20,
     validation_size: float = 0.15,
     compute_shap_importance: bool = True,
-    early_stopping_patience: int = 60,
+    early_stopping_patience: int = 250,
 ) -> TrainingResult:
     """Train and evaluate the credit model.
 
@@ -295,47 +292,28 @@ def train_model(
         stratify=y_train_full,
     )
 
-    # --- MLP trained for true epochs over the data ---------------------------
-    # Each epoch = one full pass over the training set (as in neural-net
-    # terminology). Validation set is used for early stopping: training halts
-    # when validation loss has not improved for `early_stopping_patience`
-    # epochs, and the best weights are restored.
-    #
-    # MLPClassifier does not accept NaN, so we impute with the training-set
-    # median (fit on train only, then transform train/val/test consistently).
+    # --- XGBoost, trained with early stopping --------------------------------
+    # XGBoost handles missing values natively, so we do NOT impute train/val
+    # before fitting: the missing split direction is learned by the tree
+    # itself. We still impute the *test* matrix for metric computation only,
+    # and we keep an imputed copy of the full training matrix so the SHAP
+    # explainer sees the same data the model saw (with NaNs preserved).
     imputer = SimpleImputer(strategy="median")
     X_train_imp = imputer.fit_transform(X_train)
     X_val_imp = imputer.transform(X_val)
     X_train_full_imp = imputer.transform(X_train_full)
 
-    model = MLPClassifier(
-        hidden_layer_sizes=(128, 64, 32),
-        activation="relu",
-        solver="adam",
-        alpha=1e-4,
-        batch_size=256,
-        learning_rate="adaptive",
-        learning_rate_init=1e-3,
-        max_iter=100,                 # 100 true epochs over the training data
-        early_stopping=True,
-        validation_fraction=0.15,
-        n_iter_no_change=early_stopping_patience,
-        random_state=seed,
+    model = XGBClassifier(
+        **{**XGB_PARAMS, "early_stopping_rounds": early_stopping_patience},
+    )
+    model.fit(
+        X_train_imp,
+        y_train,
+        eval_set=[(X_val_imp, y_val)],
         verbose=False,
     )
-    model.fit(X_train_imp, y_train)
 
-    # Render a clean epoch-level progress summary (one line per epoch).
-    n_epochs_run = int(getattr(model, "n_iter_", 0))
-    val_scores = getattr(model, "validation_scores_", None)
-    if val_scores is not None and len(val_scores) > 0:
-        for ep in range(min(n_epochs_run, len(val_scores))):
-            print(f"Epoch {ep + 1:3d} | val_accuracy: {val_scores[ep]:.4f}")
-    else:
-        for ep in range(n_epochs_run):
-            print(f"Epoch {ep + 1:3d} | trained")
-
-    # --- headline metrics -----------------------------------------------------
+    # --- headline metrics ---------------------------------------------------
     # ``model.predict_proba`` returns P(repaid_on_time = 1). The scorecard needs
     # that probability; risk tiers and calibration tables need its complement,
     # the probability of default. Keeping both named explicitly avoids the
@@ -374,8 +352,8 @@ def train_model(
         "validation": {
             "accounts": int(len(y_val)),
             "roc_auc": round(float(roc_auc_score(y_val, model.predict_proba(X_val_imp)[:, 1])), 4),
-            "best_iteration": getattr(model, "n_iter_", 0),
-            "epochs_trained": getattr(model, "n_iter_", 0),
+            "best_iteration": int(model.best_iteration),
+            "epochs_trained": int(model.best_iteration),
         },
         "calibration_deciles": _decile_calibration(y_test, pd_default),
         "segment_breakdown": _segment_metrics(
@@ -392,7 +370,7 @@ def train_model(
         metrics["train"]["roc_auc"] - metrics["test"]["roc_auc"], 4
     )
 
-    # --- generator ceiling ----------------------------------------------------
+    # --- generator ceiling --------------------------------------------------
     # The synthetic target was sampled from a known latent probability. Scoring
     # against it quantifies how much of the recoverable signal the model found,
     # which is far more honest than quoting training accuracy.
@@ -436,16 +414,20 @@ def train_model(
     }
 
     # --- importances ----------------------------------------------------------
-    # MLP feature importance via absolute incoming weight magnitude per input
-    # feature (summed across all hidden units in the first layer). This is a
-    # coarse proxy, not as clean as XGBoost gain, but gives ausable ranking.
-    first_layer_weights = model.coefs_[0]            # shape (n_features, n_hidden)
-    importance_values = np.abs(first_layer_weights).sum(axis=1)
+    # XGBoost gain: the built-in objective-aware importance, summed by group.
+    booster = model.get_booster()
+    gain_by_feature = booster.get_score(importance_type="gain")
+    if gain_by_feature:
+        gain_values = np.array([gain_by_feature.get(col, 0.0) for col in FEATURE_COLUMNS], dtype=float)
+    else:
+        gain_values = np.zeros(len(FEATURE_COLUMNS), dtype=float)
     importance = (
-        pd.DataFrame({
-            "feature": list(FEATURE_COLUMNS),
-            "gain": list(importance_values),
-        })
+        pd.DataFrame(
+            {
+                "feature": list(FEATURE_COLUMNS),
+                "gain": list(gain_values),
+            }
+        )
         .sort_values("gain", ascending=False)
         .reset_index(drop=True)
     )
@@ -476,19 +458,18 @@ def train_model(
     metrics["top_drivers_by_shap"] = shap_importance.head(8).to_dict(orient="records")
 
     metrics["model"] = {
-        "library": f"sklearn {MLPClassifier.__module__.split('.')[0]} {MLPClassifier.__module__.split('.')[-1]}",
+        "library": "xgboost",
         "params": {
-            "hidden_layer_sizes": (128, 64, 32),
-            "activation": "relu",
-            "solver": "adam",
-            "alpha": 1e-4,
-            "batch_size": 256,
-            "learning_rate": "adaptive",
-            "learning_rate_init": 1e-3,
-            "max_iter": 100,
-            "early_stopping": True,
-            "validation_fraction": 0.15,
-            "n_iter_no_change": early_stopping_patience,
+            "n_estimators": XGB_PARAMS["n_estimators"],
+            "learning_rate": XGB_PARAMS["learning_rate"],
+            "max_depth": XGB_PARAMS["max_depth"],
+            "min_child_weight": XGB_PARAMS["min_child_weight"],
+            "subsample": XGB_PARAMS["subsample"],
+            "colsample_bytree": XGB_PARAMS["colsample_bytree"],
+            "gamma": XGB_PARAMS["gamma"],
+            "reg_lambda": XGB_PARAMS["reg_lambda"],
+            "reg_alpha": XGB_PARAMS["reg_alpha"],
+            "objective": XGB_PARAMS["objective"],
         },
         "n_features": int(features.shape[1]),
         "feature_columns": list(FEATURE_COLUMNS),
@@ -613,7 +594,7 @@ def run_training(
     model_path: str | Path = DEFAULT_MODEL_PATH,
     compute_shap_importance: bool = True,
     verbose: bool = True,
-    early_stopping_patience: int = 60,
+    early_stopping_patience: int = 250,
 ) -> tuple[TrainingResult, dict[str, Any]]:
     """End-to-end entry point used by ``train_model.py`` and the tests."""
     portfolio, data_report = load_portfolio(
@@ -662,7 +643,7 @@ def _print_report(
           f"(raw + engineered ratios + one-hot categoricals)")
     print(f"Rows train/val/test: {metrics['model']['training_rows']:,} / "
           f"{metrics['model']['validation_rows']:,} / {metrics['model']['test_rows']:,}")
-    print(f"Epochs trained     : {metrics['validation']['epochs_trained']}")
+    print(f"Trees trained      : {metrics['validation']['best_iteration']}")
     print("-" * width)
     print("HOLD-OUT PERFORMANCE")
     print(f"  ROC-AUC          : {test['roc_auc']:.4f}   (Gini {test['gini']:.4f})")

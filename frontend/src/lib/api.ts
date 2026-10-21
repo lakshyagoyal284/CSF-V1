@@ -50,12 +50,30 @@ function describeDetail(detail: unknown): { message: string; fields?: string[] }
   return { message: "Unexpected error from the scoring service." };
 }
 
+function authHeaders(): Record<string, string> {
+  // The legacy console is banker-only. Reuse the portal session token rather
+  // than duplicating a second auth mechanism; on the server there is no token.
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem("agritrust.session");
+    if (!raw) return {};
+    const token = (JSON.parse(raw) as { token?: string }).token;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch {
+    return {};
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`${API_BASE}${path}`, {
       ...init,
-      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(),
+        ...(init?.headers ?? {}),
+      },
       cache: "no-store",
     });
   } catch {

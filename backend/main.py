@@ -31,9 +31,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
 from backend import service
+from backend.auth import BankerUser
 from backend.config import Settings, get_settings
 from backend.db import create_all, database_health, persist_assessment, recent_assessments
 from backend.model_registry import ModelNotAvailable, ModelRegistry, get_registry
+from backend.portal_db import init_portal_db
+from backend.portal_routes import router as portal_router
 from backend.schemas import (
     HealthResponse,
     ModelInfoResponse,
@@ -77,25 +80,41 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("No ACS_DATABASE_URL configured - running stateless (assessments not persisted)")
 
+    # Dual-portal database. Initialisation failure is logged, not fatal: the
+    # legacy scoring endpoints still work, and portal routes report a clear 500
+    # rather than taking the whole service down during a demo.
+    try:
+        init_portal_db()
+        logger.info("AgriTrust portal ready (%s)", settings.portal_database_url.split("@")[-1])
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Portal database initialisation failed: %s", exc)
+
     yield
 
 
+_settings: Settings = get_settings()
+
 app = FastAPI(
-    title="Alternative Credit Scoring Engine",
+    title=_settings.api_title,
     description=(
-        "AI-assisted underwriting for farmers and MSME borrowers without a bureau "
-        "history. Scores declared tangible collateral (land, property, machinery, "
-        "inventory) together with alternative cash-flow proxies (UPI turnover, "
-        "utility payment discipline) into a 300-900 credit score with SHAP-backed "
-        "reasons, a risk tier and a recommended credit limit."
+        "AgriTrust AI - a dual-portal alternative credit scoring platform for banks "
+        "and microfinance institutions.\n\n"
+        "* **Borrowers** declare tangible assets and alternative cash-flow proxies "
+        "and upload proofs. They can never run or view the model.\n"
+        "* **Bank officers** verify the evidence, trigger XGBoost scoring, and see "
+        "a 300-900 score, risk tier, recommended limit and SHAP reasons.\n\n"
+        "Sign in via `POST /api/auth/login` and use the returned bearer token in "
+        "the Authorize dialog. Demo banker: banker@agritrust.ai / Banker@123."
     ),
-    version="1.0.0",
+    version=_settings.api_version,
     lifespan=lifespan,
     on_startup=None,
     on_shutdown=None,
 )
 
-_settings: Settings = get_settings()
+# Dual-portal routes (auth, borrower submissions, banker underwriting).
+app.include_router(portal_router)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_settings.cors_origin_list,
@@ -201,8 +220,8 @@ def sample_applicants() -> list[SampleApplicant]:
 
 
 @app.post("/api/score", response_model=ScoreResponse, tags=["scoring"])
-def score(request: ScoreRequest, loaded=Depends(loaded_model)) -> ScoreResponse:
-    """Score one loan application.
+def score(request: ScoreRequest, banker: BankerUser, loaded=Depends(loaded_model)) -> ScoreResponse:
+    """Score one loan application (bank officer only).
 
     Returns the 300-900 credit score, the risk tier and underwriting decision,
     the recommended credit limit (with the binding constraint that produced it)
@@ -220,8 +239,8 @@ def score(request: ScoreRequest, loaded=Depends(loaded_model)) -> ScoreResponse:
 
 
 @app.post("/api/simulate", response_model=SimulateResponse, tags=["scoring"])
-def simulate(request: SimulateRequest, loaded=Depends(loaded_model)) -> SimulateResponse:
-    """Re-run scoring with modified collateral / cash-flow assumptions.
+def simulate(request: SimulateRequest, banker: BankerUser, loaded=Depends(loaded_model)) -> SimulateResponse:
+    """Re-run scoring with modified assumptions (bank officer only).
 
     Typical officer questions this answers: *what if the tractor is also pledged*,
     *what if inventory turns out to be 25% higher*, *what if we sanction 100k less*.
@@ -232,14 +251,17 @@ def simulate(request: SimulateRequest, loaded=Depends(loaded_model)) -> Simulate
 
 
 @app.get("/api/assessment-history", tags=["ops"])
-def assessment_history(limit: int = Query(default=20, ge=1, le=200)) -> list[dict[str, Any]]:
+def assessment_history(
+    banker: BankerUser,
+    limit: int = Query(default=20, ge=1, le=200),
+) -> list[dict[str, Any]]:
     """Recent assessments (empty list when no database is configured)."""
     return recent_assessments(limit=limit)
 
 
 @app.post("/api/admin/reload-model", tags=["ops"])
-def reload_model() -> dict[str, Any]:
-    """Hot-swap the model artifact without restarting the service."""
+def reload_model(banker: BankerUser) -> dict[str, Any]:
+    """Hot-swap the model artifact without restarting the service (banker only)."""
     registry = model_registry_dependency()
     try:
         loaded = registry.reload()

@@ -34,3 +34,19 @@ Thumbs.db
 # can run the API and the dashboard immediately. Re-create them any time with
 #   python train_model.py --refresh-data
 # ---------------------------------------------------------------------------
+
+# --- Uploaded proofs (simulated object storage) -----------------------------
+data/uploads/
+
+# --- Local end-to-end test artifacts ---------------------------------------
+.e2e/
+node_modules/
+.next/
+*.db
+*.sqlite3
+data/uploads/
+.e2e/
+.venv/
+venv/
+*.pkl
+artifacts/*.pkl

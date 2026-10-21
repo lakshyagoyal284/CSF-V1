@@ -43,10 +43,33 @@ class Settings(BaseSettings):
     #: Persist assessments by default even if the caller does not ask.
     persist_by_default: bool = False
 
+    # --- dual-portal database -------------------------------------------------
+    #: Default is a local SQLite file so the demo runs with zero setup.
+    #: Point this at PostgreSQL for a real deployment, e.g.
+    #: ``postgresql+psycopg://agritrust:agritrust@localhost:5432/agritrust``.
+    portal_database_url: str = "sqlite:///./data/agritrust.db"
+    #: Create the portal tables on startup. ``None`` means "auto": create on
+    #: SQLite (zero-config demo/tests) but never on PostgreSQL, where the
+    #: reviewed db/agritrust_schema.sql must be applied by a migration tool.
+    portal_create_tables: bool | None = None
+    #: Create the demo banker/borrower logins and one pending application.
+    portal_seed_demo: bool = True
+
+    # --- authentication -------------------------------------------------------
+    #: HS256 signing secret. MUST be overridden in any shared environment.
+    jwt_secret: str = "agritrust-dev-secret-change-me-before-deploying"
+    jwt_algorithm: str = "HS256"
+    jwt_issuer: str = "agritrust-ai"
+    jwt_expiry_minutes: int = 480
+
+    # --- document storage (simulated object storage) --------------------------
+    upload_dir: str = "data/uploads"
+    max_upload_mb: int = 10
+
     # --- API surface ----------------------------------------------------------
-    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
-    api_title: str = "Alternative Credit Scoring Engine"
-    api_version: str = "1.0.0"
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
+    api_title: str = "AgriTrust AI - Alternative Credit Scoring"
+    api_version: str = "2.0.0"
     log_level: str = "INFO"
 
     #: Score band boundaries surfaced to clients (kept in sync with the model

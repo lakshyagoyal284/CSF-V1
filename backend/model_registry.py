@@ -130,7 +130,7 @@ class ModelRegistry:
         )
         return LoadedModel(
             model=model,
-            explainer=CreditExplainer(model),
+            explainer=CreditExplainer(model, feature_columns=columns),
             feature_columns=columns,
             metadata={
                 "trained_at": bundle.get("trained_at"),

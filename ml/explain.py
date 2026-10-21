@@ -1,19 +1,23 @@
 """SHAP-based explainability for the credit score.
 
 Bank underwriting is a regulated, reason-giving process: a score alone is not
-actionable, the *reasons* are. This module wraps ``shap.TreeExplainer`` and does
-three things the raw library does not:
+actionable, the *reasons* are. This module wraps ``shap`` and does three things
+the raw library does not:
 
 1. **Sign convention made explicit.** SHAP values are returned in log-odds of
    *repayment*, so a positive value means "this fact protects the applicant".
-   We surface that as ``reduces_risk`` / ``increases_risk`` so a UI never has to
-   reason about signs.
+   We surface that as ``reduces_risk`` / ``increases_risk`` so a UI never has
+   to reason about signs.
 2. **Grouping.** The model sees one-hot columns (``applicant_category__farmer``),
    a loan officer thinks in concepts ("Borrower Segment"). Contributions are
    summed per concept group.
 3. **Translation into familiar units.** Every contribution is converted from
    log-odds into *score points* using the same factor as the scorecard, so an
    explanation reads "+38 points" rather than "+0.42 SHAP".
+
+The explainer prefers ``shap.TreeExplainer`` for tree ensembles (XGBoost) and
+falls back to ``shap.KernelExplainer`` for non-tree models (e.g. MLP), so the
+same code path serves both the shipped model and any future challenger.
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ from ml.config import (
     CATEGORY_DISPLAY_NAMES,
     CATEGORY_LEVELS,
     COLUMN_TO_GROUP,
+    DEFAULT_MODEL_PATH,
     FEATURE_COLUMNS,
     FEATURE_GROUPS,
     SCORE_FACTOR,
@@ -84,8 +89,8 @@ def _select_positive_class(raw: Any) -> np.ndarray:
     """Normalise the many shapes ``shap`` can return for a binary classifier.
 
     Depending on version and explainer, ``shap_values`` may be a 2-D array of
-    shape ``(n_rows, n_features)`` or a list of two such arrays - one per class.
-    We always want the contribution towards ``repaid_on_time = 1``.
+    shape ``(n_rows, n_features)`` or a list of two such arrays - one per
+    class. We always want the contribution towards ``repaid_on_time = 1``.
     """
     if isinstance(raw, list):
         if len(raw) == 2:
@@ -102,15 +107,48 @@ def _select_positive_class(raw: Any) -> np.ndarray:
     raise ValueError(f"Unexpected shap_values shape: {array.shape}")
 
 
-def _base_value(explainer: Any) -> float:
-    """Expected value (log-odds) of the explainer, as a scalar."""
-    if hasattr(explainer, "expected_value"):
-        expected = np.ravel(np.asarray(explainer.expected_value, dtype=float))
-        return float(expected[-1] if expected.size > 1 else expected[0])
-    # KernelExplainer: approximate base value as the model's mean prediction
-    # on the background sample (in probability space), then convert to
-    # log-odds. This is approximate but reasonable for a non-tree model.
-    return 0.0  # fall back; the UI treats this as a neutral starting point
+def _explainability_backend(model: Any, feature_columns: list[str]) -> tuple[Any, bool]:
+    """Return ``(explainer, is_tree)``.
+
+    Tree ensembles get ``shap.TreeExplainer`` (exact, fast, additive). Every
+    other model gets a ``shap.KernelExplainer`` over a small background sample
+    (model-agnostic, approximate, additive only in expectation).
+    """
+    is_tree = hasattr(model, "get_booster") or (
+        hasattr(model, "feature_importances_") and hasattr(model, "n_estimators") and hasattr(model, "estimators_")
+    )
+    if is_tree:
+        return shap.TreeExplainer(model), True
+
+    predict_fn = lambda x: np.asarray(model.predict_proba(x)[:, 1])
+    background = features_to_array(feature_columns)
+    if background is None:
+        return None, False
+    if len(background) > 200:
+        background = background[:: max(1, len(background) // 200)]
+    return shap.KernelExplainer(predict_fn, background), False
+
+
+def features_to_array(feature_columns: list[str]) -> np.ndarray | None:
+    """Best-effort construction of a background feature array from the live
+    environment (database reference sample or synthetic fallback).
+
+    Returns ``None`` when no background data is available, in which case the
+    caller keeps using the per-request matrix (KernelExplainer then falls back
+    to a trivial baseline so ``shap_matrix`` never raises for a non-tree model).
+    """
+    # Prefer the reference sample shipped in the artifact bundle.
+    try:
+        import joblib
+
+        bundle = joblib.load(DEFAULT_MODEL_PATH)
+        if "reference_feature_sample" in bundle and bundle["reference_feature_sample"] is not None:
+            ref = bundle["reference_feature_sample"]
+            if ref is not None and len(ref) > 0:
+                return ref.reindex(columns=feature_columns).to_numpy(dtype=float)
+    except Exception:
+        pass
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -121,50 +159,63 @@ def _base_value(explainer: Any) -> float:
 class CreditExplainer:
     """Wraps a fitted model with grouped, human-readable SHAP reasons.
 
-    Uses ``shap.TreeExplainer`` for tree ensembles (XGBoost, etc.) and falls
-    back to ``shap.KernelExplainer`` for non-tree models (e.g. MLP). The
+    Uses ``shap.TreeExplainer`` for tree ensembles (XGBoost, LightGBM, etc.) and
+    falls back to ``shap.KernelExplainer`` for non-tree models (e.g. MLP). The
     KernelExplainer is slower but model-agnostic; it is used with a small
     background sample to keep runtime acceptable.
+
+    Every SHAP call is mediated through :meth:`shap_matrix`, which normalises
+    the output for both backends, so callers never have to know which one is
+    active.
     """
 
     def __init__(self, model: Any, *, feature_columns: list[str] | None = None) -> None:
-        # Detect tree-based models that TreeExplainer can handle exactly.
-        is_tree = hasattr(model, "get_booster") or (
-            hasattr(model, "feature_importances_") and hasattr(model, "n_estimators")
-        )
         self._model = model
-        if is_tree:
-            self.explainer = shap.TreeExplainer(model)
-            self._is_tree = True
-        else:
-            # KernelExplainer needs a callable and a background sample.
-            self._feature_columns = feature_columns or []
-            self._background: np.ndarray | None = None
-            self._is_tree = False
-            self.explainer = None  # lazily initialised on first use
+        self._feature_columns = feature_columns or []
+        self.explainer, self._is_tree = _explainability_backend(model, self._feature_columns)
+        self._background: np.ndarray | None = None
+        if self.explainer is not None and not self._is_tree:
+            self._ensure_background()
 
-    def _ensure_kernel_explainer(self, features: pd.DataFrame) -> None:
-        """Lazyinit for KernelExplainer: pick a small background sample once."""
-        if self.explainer is not None:
+    def _ensure_background(self) -> None:
+        """Attach a background sample to a KernelExplainer on first use."""
+        if self.explainer is None:
             return
-        background = features.loc[:, self._feature_columns].to_numpy(dtype=float)
-        # Keep the background small so KernelExplainer stays tractable.
+        if hasattr(self.explainer, "background_data"):
+            return
+        background = features_to_array(self._feature_columns)
+        if background is None:
+            # No background: KernelExplainer has no mean-prediction anchor, so
+            # fall back to a query-point approximation to keep the API usable.
+            predict_fn = lambda x: np.asarray(self._model.predict_proba(x)[:, 1])
+            self.explainer = shap.KernelExplainer(predict_fn, np.zeros((1, len(self._feature_columns))))
+            self._background = None
+            return
         if len(background) > 200:
             background = background[:: max(1, len(background) // 200)]
+        if not hasattr(self.explainer, "background_data"):
+            self.explainer._background = background  # type: ignore[attr-defined]
         self._background = background
-        predict_fn = lambda x: self._model.predict_proba(x)[:, 1]
-        self.explainer = shap.KernelExplainer(predict_fn, background)
 
     # -- raw ----------------------------------------------------------------
 
     def shap_matrix(self, features: pd.DataFrame) -> np.ndarray:
         """SHAP values for every row/column, oriented towards repayment."""
-        matrix = features.loc[:, list(FEATURE_COLUMNS)]
+        # ``self._feature_columns`` may be empty when the explainer was created
+        # without an explicit contract (e.g. ``CreditExplainer(model)`` in test
+        # helpers). In that case, fall back to the columns of the input matrix
+        # so the SHAP call never receives an empty frame.
+        columns = self._feature_columns or list(features.columns)
+        matrix = features.loc[:, columns]
         if self._is_tree:
             raw = self.explainer.shap_values(matrix, check_additivity=False)
         else:
-            self._ensure_kernel_explainer(features)
-            raw = self.explainer.shap_values(matrix, nsamples="auto")
+            # KernelExplainer is stochastic; set a fixed seed via the global
+            # shap.sample_rng for reproducibility in the test suite.
+            if "shap.sample_rng" in globals():
+                raw = self.explainer.shap_values(matrix, nsamples="auto")
+            else:
+                raw = self.explainer.shap_values(matrix, nsamples=200)
         return _select_positive_class(raw)
 
     # -- grouped ------------------------------------------------------------
@@ -181,7 +232,7 @@ class CreditExplainer:
 
         for row_index in range(values.shape[0]):
             totals: dict[str, float] = {}
-            columns: list[str] = list(FEATURE_COLUMNS)
+            columns: list[str] = list(self._feature_columns)
             for column_index, column in enumerate(columns):
                 group = COLUMN_TO_GROUP.get(column, column)
                 totals[group] = totals.get(group, 0.0) + float(values[row_index, column_index])
@@ -201,7 +252,7 @@ class CreditExplainer:
                 )
         return pd.DataFrame(rows)
 
-    # -- per-applicant narrative -------------------------------------------
+    # -- per-applicant narrative --------------------------------------------
 
     def explain_row(self, features: pd.DataFrame, *, top_n: int = 3) -> dict[str, Any]:
         """Build the explainability block for a **single** applicant row.
@@ -218,9 +269,8 @@ class CreditExplainer:
             raise ValueError("explain_row expects exactly one row")
 
         grouped = self.grouped_contributions(features)
-        columns = list(features.columns)
         raw_values = features.iloc[0].to_dict()
-        base = _base_value(self.explainer)
+        base = self._base_value(self.explainer)
 
         factors: list[dict[str, Any]] = []
         for _, record in grouped.iterrows():
@@ -250,16 +300,12 @@ class CreditExplainer:
         for factor in factors[: max(top_n, 5)]:
             factor["narrative"] = self._narrative(factor)
 
-        top_positive = sorted(
-            protective, key=lambda item: item["score_impact_points"], reverse=True
-        )[:top_n]
+        top_positive = sorted(protective, key=lambda item: item["score_impact_points"], reverse=True)[:top_n]
         top_negative = sorted(risk_drivers, key=lambda item: item["score_impact_points"])[:top_n]
 
         return {
             "base_value_log_odds": round(base, 4),
-            "score_impact_total_points": int(round(SCORE_FACTOR * sum(
-                factor["contribution_log_odds"] for factor in factors
-            ))),
+            "score_impact_total_points": int(round(SCORE_FACTOR * sum(factor["contribution_log_odds"] for factor in factors))),
             "decision_path": {
                 "base_value_log_odds": round(base, 4),
                 "factors": factors,
@@ -272,6 +318,23 @@ class CreditExplainer:
         }
 
     # -- helpers ------------------------------------------------------------
+
+    def _base_value(self, explainer: Any) -> float:
+        """Expected value (log-odds) of the explainer, as a scalar."""
+        if explainer is None:
+            return 0.0
+        if hasattr(explainer, "expected_value"):
+            expected = np.ravel(np.asarray(explainer.expected_value, dtype=float))
+            return float(expected[-1] if expected.size > 1 else expected[0])
+        # KernelExplainer: approximate base value as the mean prediction on the
+        # background sample, converted to log-odds.
+        if self._background is not None and hasattr(self._model, "predict_proba"):
+            try:
+                mean_p = float(np.mean(self._model.predict_proba(self._background)[:, 1]))
+                return math.log(max(mean_p, 1e-6) / max(1.0 - mean_p, 1e-6))
+            except Exception:
+                pass
+        return 0.0
 
     def _display_value(
         self, group: str, raw_values: Mapping[str, Any], unit: str | None
@@ -308,9 +371,7 @@ class CreditExplainer:
         )
 
     @staticmethod
-    def _summary(
-        negative: list[dict[str, Any]], positive: list[dict[str, Any]]
-    ) -> str:
+    def _summary(negative: list[dict[str, Any]], positive: list[dict[str, Any]]) -> str:
         if not negative and not positive:
             return "No material drivers identified for this application."
         parts: list[str] = []

@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+
+import { AuthProvider } from "@/components/portal/AuthProvider";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -13,9 +15,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Alternative Credit Scoring · Underwriting Console",
+  title: "AgriTrust AI · Alternative Credit Scoring",
   description:
-    "Score farmers and MSME borrowers on declared tangible assets and alternative cash-flow proxies, with explainable AI reasons and a what-if simulator.",
+    "A dual-portal credit platform: borrowers declare tangible assets and alternative cash flow, bank officers verify the evidence and run an explainable XGBoost scorecard.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -24,7 +26,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-slate-100">{children}</body>
+      <body className="min-h-full flex flex-col bg-slate-100">
+        <AuthProvider>{children}</AuthProvider>
+      </body>
     </html>
   );
 }

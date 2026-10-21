@@ -1,7 +1,6 @@
-import { UnderwritingDashboard } from "@/components/UnderwritingDashboard";
+import { PortalLanding } from "@/components/portal/PortalLanding";
 
-/** The underwriting console is entirely interactive, so the page is a thin
- *  server component that hands off to the client dashboard. */
+/** Public entry point: sign in as a borrower or a bank officer. */
 export default function Home() {
-  return <UnderwritingDashboard />;
+  return <PortalLanding />;
 }
