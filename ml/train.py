@@ -298,18 +298,42 @@ def train_model(
     # itself. We still impute the *test* matrix for metric computation only,
     # and we keep an imputed copy of the full training matrix so the SHAP
     # explainer sees the same data the model saw (with NaNs preserved).
+    #
+    # On combined real-world portfolios the engineered ratios can be undefined
+    # for many rows (e.g. no collateral and no income proxy). Those rows are
+    # still useful for learning missingness patterns, but a flat 0-fill would
+    # distort ratios like net worth and coverage. We therefore impute the raw
+    # numerics that feed ratio construction with medians fit on the training
+    # split, then build ratios from those imputed raws.
+    raw_numeric_input_columns = [
+        c for c in RAW_NUMERIC_FEATURES if c in X_train.columns
+    ]
     imputer = SimpleImputer(strategy="median")
-    X_train_imp = imputer.fit_transform(X_train)
-    X_val_imp = imputer.transform(X_val)
-    X_train_full_imp = imputer.transform(X_train_full)
+    X_train_raw_imp = X_train.copy()
+    X_val_raw_imp = X_val.copy()
+    X_train_full_raw_imp = X_train_full.copy()
+    X_test_raw_imp = X_test.copy()
+    if raw_numeric_input_columns:
+        X_train_raw_imp[raw_numeric_input_columns] = imputer.fit_transform(
+            X_train[raw_numeric_input_columns]
+        )
+        X_val_raw_imp[raw_numeric_input_columns] = imputer.transform(
+            X_val[raw_numeric_input_columns]
+        )
+        X_train_full_raw_imp[raw_numeric_input_columns] = imputer.transform(
+            X_train_full[raw_numeric_input_columns]
+        )
+        X_test_raw_imp[raw_numeric_input_columns] = imputer.transform(
+            X_test[raw_numeric_input_columns]
+        )
 
     model = XGBClassifier(
         **{**XGB_PARAMS, "early_stopping_rounds": early_stopping_patience},
     )
     model.fit(
-        X_train_imp,
+        X_train_raw_imp,
         y_train,
-        eval_set=[(X_val_imp, y_val)],
+        eval_set=[(X_val_raw_imp, y_val)],
         verbose=False,
     )
 
@@ -318,10 +342,9 @@ def train_model(
     # that probability; risk tiers and calibration tables need its complement,
     # the probability of default. Keeping both named explicitly avoids the
     # classic sign flip between "score" and "risk".
-    X_test_imp = imputer.transform(X_test)
-    p_repay = model.predict_proba(X_test_imp)[:, 1]
+    p_repay = model.predict_proba(X_test_raw_imp)[:, 1]
     pd_default = 1.0 - p_repay
-    y_pred_train = model.predict_proba(X_train_imp)[:, 1]
+    y_pred_train = model.predict_proba(X_train_raw_imp)[:, 1]
     y_label = (p_repay >= 0.5).astype(int)
 
     tn, fp, fn, tp = confusion_matrix(y_test, y_label, labels=[0, 1]).ravel()
@@ -351,7 +374,7 @@ def train_model(
         },
         "validation": {
             "accounts": int(len(y_val)),
-            "roc_auc": round(float(roc_auc_score(y_val, model.predict_proba(X_val_imp)[:, 1])), 4),
+            "roc_auc": round(float(roc_auc_score(y_val, model.predict_proba(X_val_raw_imp)[:, 1])), 4),
             "best_iteration": int(model.best_iteration),
             "epochs_trained": int(model.best_iteration),
         },
@@ -376,7 +399,7 @@ def train_model(
     # which is far more honest than quoting training accuracy.
     if "latent_repayment_probability" in portfolio.columns:
         latent = portfolio.iloc[idx_test]["latent_repayment_probability"].to_numpy(dtype=float)
-        if len(np.unique(latent)) > 1:
+        if len(np.unique(latent)) > 1 and np.isfinite(latent).all():
             oracle_auc = float(roc_auc_score(y_test, latent))
             metrics["generator_ceiling"] = {
                 "latent_roc_auc": round(oracle_auc, 4),
@@ -437,8 +460,11 @@ def train_model(
     explainer = CreditExplainer(model, feature_columns=FEATURE_COLUMNS)
     if compute_shap_importance:
         # SHAP needs the same imputed matrix the model actually sees.
+        # On combined portfolios many engineered ratios are undefined for some
+        # rows, so we impute the full feature matrix before explaining it.
+        full_imputer = SimpleImputer(strategy="median")
         features_imp = pd.DataFrame(
-            imputer.transform(features),
+            full_imputer.fit_transform(features),
             columns=list(features.columns),
             index=features.index,
         )
@@ -495,11 +521,14 @@ def train_model(
 # ---------------------------------------------------------------------------
 
 
-def _safe_percentiles(series: pd.Series) -> dict[str, float | None]:
+def _safe_percentiles(values: np.ndarray | pd.Series) -> dict[str, float | None]:
     """Percentiles for a feature that may be entirely missing (e.g. a
     farm-only field). Returns ``None`` rather than the NaN that
     ``np.nanpercentile`` would raise a warning about."""
-    values = series.to_numpy(dtype=float)
+    if isinstance(values, pd.Series):
+        values = values.to_numpy(dtype=float)
+    else:
+        values = np.asarray(values, dtype=float)
     if not np.isfinite(values).any():
         return {"p10": None, "p50": None, "p90": None}
     low, mid, high = np.nanpercentile(values, [10, 50, 90])
@@ -536,9 +565,12 @@ def save_artifacts(
     )
     reference_features = build_feature_matrix(reference)
     # The model works on imputed features; store the imputed reference matrix
-    # so the API can score new applications consistently.
+    # so the API can score new applications consistently. Use a fresh imputer
+    # fit on the reference feature matrix so we never depend on the training
+    # imputer once the artifact is saved.
+    reference_imputer = SimpleImputer(strategy="median")
     reference_features = pd.DataFrame(
-        imputer.transform(reference_features),
+        reference_imputer.fit_transform(reference_features),
         columns=list(reference_features.columns),
         index=reference_features.index,
     )
@@ -553,7 +585,7 @@ def save_artifacts(
         "data_report": data_report,
         "reference_feature_sample": reference_features,
         "reference_percentiles": {
-            column: _safe_percentiles(reference_features[column])
+            column: _safe_percentiles(reference_features[column].to_numpy(dtype=float))
             for column in FEATURE_COLUMNS
         },
         "environment": {

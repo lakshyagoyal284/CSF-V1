@@ -14,7 +14,7 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from ml.config import DEFAULT_MODEL_PATH
+from ml.config import DEFAULT_MODEL_PATH  # still the training default; serving default is set in Settings.model_path
 
 
 class Settings(BaseSettings):
@@ -28,7 +28,12 @@ class Settings(BaseSettings):
     )
 
     # --- artifacts ------------------------------------------------------------
-    model_path: str = DEFAULT_MODEL_PATH
+    #: Default serving model for the API. The combined model trained on bank,
+    #: mortgage, credit-rating and synthetic data is the current recommended
+    #: default because it has stronger hold-out metrics and cleaner tier
+    #: separation. The legacy synthetic model is still produced by
+    #: ``python train_model.py`` and can be swapped back in via this setting.
+    model_path: str = "artifacts/credit_model_combined.pkl"  # preferred serving default; set ACS_MODEL_PATH to override
     #: Fail fast at boot when the artifact is missing instead of 503-ing later.
     require_model_on_startup: bool = True
 

@@ -50,3 +50,5 @@ data/uploads/
 venv/
 *.pkl
 artifacts/*.pkl
+data/raw/*.csv
+data/raw/

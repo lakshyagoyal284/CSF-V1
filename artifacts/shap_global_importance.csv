@@ -1,39 +1,39 @@
 feature,label,mean_abs_log_odds,mean_signed_log_odds,mean_abs_score_points,direction
-proposed_debt_service_ratio,Proposed Debt Service,0.6459,0.1784,57.9,mostly reduces risk
-debt_to_asset_ratio,Debt-to-Asset Ratio,0.5014,0.1408,44.9,mostly reduces risk
-income_to_debt_ratio,Income-to-Debt Ratio,0.266,0.087,23.8,mostly reduces risk
-debt_service_ratio,Debt Service Ratio,0.2621,0.0899,23.5,mostly reduces risk
-collateral_coverage_ratio,Collateral Coverage,0.1841,0.0399,16.5,mostly reduces risk
-financial_discipline_score,Financial Discipline,0.1441,0.0144,12.9,mixed
-utility_payment_consistency_score,Utility Payment Consistency,0.1391,0.0128,12.4,mixed
-dependents,Household Dependents,0.1379,0.0076,12.4,mixed
-years_in_operation,Years in Operation,0.1157,0.0076,10.3,mixed
-net_worth,Net Worth,0.0992,0.0365,8.9,mostly reduces risk
-liquidity_ratio,Liquidity Buffer,0.0725,0.0169,6.5,mixed
-post_facility_loan_to_value,Post-Facility Leverage,0.0537,0.0187,4.8,mixed
-equipment_value,Equipment & Machinery,0.0517,0.0011,4.6,mixed
-total_collateral_value,Total Pledged Collateral,0.0459,0.0131,4.1,mixed
-utility_payment_delays_12m,Utility Payment Delays,0.0266,0.0022,2.4,mixed
-age,Applicant Age,0.0226,-0.0001,2.0,mixed
-property_value,Property Value,0.0163,0.0004,1.4,mixed
-outstanding_debt,Outstanding Debt,0.0157,0.0032,1.4,mixed
-irrigation_score,Irrigation Quality,0.0133,-0.0015,1.2,mixed
-shop_area_sqft,Shop Premises Area,0.0128,-0.0008,1.1,mixed
-soil_quality_score,Soil Quality,0.0128,0.0021,1.1,mixed
-land_size_acres,Land Holding,0.0124,0.0022,1.0,mixed
-inventory_value,Inventory Value,0.0112,0.002,1.0,mixed
-monthly_upi_turnover,Monthly UPI Turnover,0.0101,0.0009,0.9,mixed
-monthly_emi_obligation,Monthly EMI Obligation,0.01,-0.0027,0.8,mixed
-crop_type,Primary Crop,0.01,-0.0009,0.8,mixed
-crop_yield_annual_value,Annual Crop Yield Value,0.01,-0.0015,0.8,mixed
-proposed_instalment,Proposed Instalment,0.01,0.001,0.9,mixed
-annual_income_proxy,Annual Income Proxy,0.0095,0.0017,0.8,mixed
-avg_monthly_bank_balance,Average Bank Balance,0.0078,-0.0008,0.6,mixed
-requested_loan_amount,Requested Loan Amount,0.0077,0.0027,0.6,mixed
-livestock_value,Livestock Value,0.0073,0.0018,0.6,mixed
-land_market_value,Land Market Value,0.0061,0.0017,0.4,mixed
-asset_productivity,Asset Productivity,0.006,0.0026,0.5,mixed
-loan_tenure_months,Requested Tenure,0.0052,0.0016,0.4,mixed
-region_tier,Region Tier,0.001,0.0002,0.0,mixed
-shop_space_ownership,Shop Ownership,0.0006,0.0001,0.0,mixed
+region_tier,Region Tier,0.5978,-0.1356,53.6,mostly increases risk
+proposed_debt_service_ratio,Proposed Debt Service,0.5083,-0.313,45.5,mostly increases risk
+age,Applicant Age,0.4379,-0.157,39.3,mostly increases risk
+income_to_debt_ratio,Income-to-Debt Ratio,0.321,-0.1374,28.8,mostly increases risk
+net_worth,Net Worth,0.2693,0.0936,24.2,mostly reduces risk
+annual_income_proxy,Annual Income Proxy,0.1927,-0.0036,17.3,mixed
+debt_to_asset_ratio,Debt-to-Asset Ratio,0.1727,0.1604,15.4,mostly reduces risk
+collateral_coverage_ratio,Collateral Coverage,0.1502,-0.0951,13.5,mostly increases risk
+loan_tenure_months,Requested Tenure,0.1134,0.0307,10.1,mostly reduces risk
+post_facility_loan_to_value,Post-Facility Leverage,0.0852,0.0819,7.7,mostly reduces risk
+proposed_instalment,Proposed Instalment,0.0632,0.0009,5.6,mixed
+liquidity_ratio,Liquidity Buffer,0.0527,-0.0113,4.7,mixed
+debt_service_ratio,Debt Service Ratio,0.0466,-0.0234,4.1,mostly increases risk
+outstanding_debt,Outstanding Debt,0.0445,0.0015,4.1,mixed
+utility_payment_consistency_score,Utility Payment Consistency,0.014,0.0061,1.3,mixed
+monthly_emi_obligation,Monthly EMI Obligation,0.0134,0.0045,1.1,mixed
+dependents,Household Dependents,0.011,-0.0004,0.7,mixed
+total_collateral_value,Total Pledged Collateral,0.0106,-0.0019,0.8,mixed
+requested_loan_amount,Requested Loan Amount,0.01,-0.0078,0.9,mixed
+financial_discipline_score,Financial Discipline,0.0092,-0.0005,0.7,mixed
+years_in_operation,Years in Operation,0.0091,0.0035,0.7,mixed
+asset_productivity,Asset Productivity,0.0068,-0.0043,0.6,mixed
+utility_payment_delays_12m,Utility Payment Delays,0.0041,0.0017,0.3,mixed
+irrigation_score,Irrigation Quality,0.0038,0.0033,0.1,mixed
+monthly_upi_turnover,Monthly UPI Turnover,0.0037,0.0028,0.2,mixed
+crop_type,Primary Crop,0.0032,0.0031,0.0,mixed
+equipment_value,Equipment & Machinery,0.0022,0.0008,0.2,mixed
+property_value,Property Value,0.0019,0.001,0.1,mixed
+avg_monthly_bank_balance,Average Bank Balance,0.0015,0.0013,0.0,mixed
+land_market_value,Land Market Value,0.0014,0.0013,0.0,mixed
+shop_area_sqft,Shop Premises Area,0.0008,0.0001,0.0,mixed
+inventory_value,Inventory Value,0.0008,0.0005,0.0,mixed
+livestock_value,Livestock Value,0.0005,0.0002,0.0,mixed
+land_size_acres,Land Holding,0.0004,-0.0001,0.0,mixed
+soil_quality_score,Soil Quality,0.0003,0.0001,0.0,mixed
+crop_yield_annual_value,Annual Crop Yield Value,0.0002,-0.0001,0.0,mixed
+shop_space_ownership,Shop Ownership,0.0001,-0.0001,0.0,mixed
 applicant_category,Borrower Segment,0.0,0.0,0.0,mixed

@@ -1,0 +1,39 @@
+feature,label,mean_abs_log_odds,mean_signed_log_odds,mean_abs_score_points,direction
+proposed_debt_service_ratio,Proposed Debt Service,0.5878,0.0902,52.7,mostly reduces risk
+debt_to_asset_ratio,Debt-to-Asset Ratio,0.4364,0.0609,39.1,mostly reduces risk
+debt_service_ratio,Debt Service Ratio,0.4083,0.1194,36.6,mostly reduces risk
+income_to_debt_ratio,Income-to-Debt Ratio,0.3344,0.0988,30.0,mostly reduces risk
+collateral_coverage_ratio,Collateral Coverage,0.2364,0.007,21.2,mixed
+financial_discipline_score,Financial Discipline,0.1777,0.0077,15.9,mixed
+years_in_operation,Years in Operation,0.1725,0.0086,15.5,mixed
+net_worth,Net Worth,0.1594,0.0215,14.3,mostly reduces risk
+utility_payment_consistency_score,Utility Payment Consistency,0.1588,0.0085,14.2,mixed
+liquidity_ratio,Liquidity Buffer,0.118,0.0477,10.6,mostly reduces risk
+utility_payment_delays_12m,Utility Payment Delays,0.1007,0.0122,9.0,mixed
+dependents,Household Dependents,0.0987,0.0044,8.8,mixed
+post_facility_loan_to_value,Post-Facility Leverage,0.0971,0.004,8.7,mixed
+total_collateral_value,Total Pledged Collateral,0.0571,0.0088,5.1,mixed
+soil_quality_score,Soil Quality,0.0417,0.0036,3.8,mixed
+property_value,Property Value,0.0402,0.0043,3.6,mixed
+avg_monthly_bank_balance,Average Bank Balance,0.0318,0.0091,2.8,mixed
+equipment_value,Equipment & Machinery,0.0289,0.0024,2.6,mixed
+asset_productivity,Asset Productivity,0.0226,0.0039,2.0,mixed
+loan_tenure_months,Requested Tenure,0.02,0.0013,1.8,mixed
+requested_loan_amount,Requested Loan Amount,0.0188,0.0007,1.7,mixed
+land_market_value,Land Market Value,0.0187,0.0026,1.6,mixed
+age,Applicant Age,0.0183,0.0007,1.6,mixed
+irrigation_score,Irrigation Quality,0.018,0.0004,1.6,mixed
+monthly_emi_obligation,Monthly EMI Obligation,0.0165,0.0018,1.4,mixed
+outstanding_debt,Outstanding Debt,0.0134,0.007,1.2,mixed
+proposed_instalment,Proposed Instalment,0.0123,-0.0013,1.1,mixed
+crop_yield_annual_value,Annual Crop Yield Value,0.0114,0.0003,0.9,mixed
+shop_area_sqft,Shop Premises Area,0.0111,-0.0021,1.0,mixed
+annual_income_proxy,Annual Income Proxy,0.0095,0.0013,0.8,mixed
+monthly_upi_turnover,Monthly UPI Turnover,0.009,-0.0011,0.7,mixed
+land_size_acres,Land Holding,0.0082,0.0008,0.7,mixed
+livestock_value,Livestock Value,0.0071,0.0019,0.6,mixed
+crop_type,Primary Crop,0.0062,-0.0001,0.5,mixed
+inventory_value,Inventory Value,0.0044,0.0009,0.3,mixed
+region_tier,Region Tier,0.0025,0.0002,0.1,mixed
+shop_space_ownership,Shop Ownership,0.0024,0.0002,0.1,mixed
+applicant_category,Borrower Segment,0.0003,0.0,0.0,mixed

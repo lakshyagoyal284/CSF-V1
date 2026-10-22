@@ -1,0 +1,15 @@
+{
+  "run_dir": "artifacts\\train_live_live",
+  "mode": "xgboost live-preview repeated cycles with live stdout",
+  "metric_optimized": "test_roc_auc",
+  "time_started": "2026-10-21T18:11:40.601804+00:00",
+  "time_ended": "2026-10-21T18:11:53.840092+00:00",
+  "start_epoch": 1792606300.601804,
+  "end_epoch": 1792606313.8400927,
+  "wall_elapsed_seconds": 13.238288640975952,
+  "cycle_count": 12,
+  "best_cycle": 3,
+  "best_auc": 0.902966116149094,
+  "live_preview": true,
+  "completion_status": "completed_live_preview"
+}

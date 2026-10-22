@@ -2,7 +2,8 @@
 
 Run locally::
 
-    python train_model.py                    # produce artifacts/credit_model.pkl
+    python train_model.py                                       # legacy synthetic model
+    python -c "from ml.integrate_external_datasets import build_unified_portfolio; from ml.train import train_model, save_artifacts; port=build_unified_portfolio(use_bank=True,use_mortgage=True,use_credit_ratings=True,use_synthetic=True,bank_sample_rows=60000,mortgage_sample_rows=60000); r=train_model(port,seed=42,early_stopping_patience=120); save_artifacts(r,portfolio=port,data_report={'source':'combined','rows':len(port)},model_path='artifacts/credit_model_combined.pkl')"   # combined model
     uvicorn backend.main:app --reload --port 8000
 
 Interactive docs: http://localhost:8000/docs
@@ -143,8 +144,7 @@ def loaded_model():
             detail={
                 "error": "model_unavailable",
                 "message": str(exc),
-                "fix": "Run `python train_model.py` to build artifacts/credit_model.pkl, "
-                       "then restart the API (or POST /api/admin/reload-model).",
+                "fix": "Run `python train_model.py` for the legacy model, or rebuild the combined model and restart the API (or POST /api/admin/reload-model).",
             },
         ) from exc
 
@@ -180,6 +180,15 @@ def health(settings: Settings = Depends(get_settings)) -> HealthResponse:
         database_connected=db_connected,
         detail=detail,
     )
+
+
+@app.get("/api/model/default-info", tags=["ops"])
+def model_default_info(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
+    """Which model the API is configured to serve by default."""
+    return {
+        "configured_model_path": str(settings.model_path),
+        "default_is_combined_model": str(settings.model_path).endswith("credit_model_combined.pkl"),
+    }
 
 
 @app.get("/api/model/info", response_model=ModelInfoResponse, tags=["ops"])

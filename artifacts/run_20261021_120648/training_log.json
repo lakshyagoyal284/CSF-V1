@@ -1,0 +1,72 @@
+{
+  "run_folder": "artifacts\\run_20261021_120648",
+  "project": "AgriTrust AI",
+  "component": "ml/credit_model",
+  "started_at": "2026-10-21T12:06:48.168945+00:00",
+  "completed_at": "2026-10-21T12:06:51.282536+00:00",
+  "model_library": "xgboost",
+  "n_records": 12000,
+  "target_repayment_rate": 0.7,
+  "seed": 7,
+  "data_generation_seconds": 2.053074598312378,
+  "training_seconds": 0.9643619060516357,
+  "artifacts_saving_seconds": 0.08815455436706543,
+  "total_seconds": 3.106,
+  "model_path_relative": "run_20261021_120648\\credit_model.pkl",
+  "model_artifact_sha256": "63fb5cd780e450473d7a0910ff698cf492a90cdf769dc241d1e3c07a1371abb4",
+  "model_artifact_size_mb": 0.178,
+  "best_iteration": 284,
+  "test_roc_auc": 0.8832,
+  "test_ks": 0.6063,
+  "test_gini": 0.7663,
+  "test_pr_auc": 0.9394,
+  "test_brier": 0.1221,
+  "test_accounts": 2400,
+  "model_training_rows": 7800,
+  "model_validation_rows": 1800,
+  "model_test_rows": 2400,
+  "artifacts": {
+    "model": "artifacts\\run_20261021_120648\\credit_model.pkl",
+    "metrics": "artifacts\\run_20261021_120648\\training_metrics.json",
+    "importance": "artifacts\\run_20261021_120648\\feature_importance.csv",
+    "shap_importance": "artifacts\\run_20261021_120648\\shap_global_importance.csv"
+  },
+  "events": [
+    {
+      "timestamp": "2026-10-21T12:06:48.168945+00:00",
+      "kind": "run_started",
+      "run_folder": "artifacts\\run_20261021_120648"
+    },
+    {
+      "timestamp": "2026-10-21T12:06:48.168945+00:00",
+      "kind": "data_generation_started"
+    },
+    {
+      "timestamp": "2026-10-21T12:06:50.222019+00:00",
+      "kind": "data_generation_completed",
+      "n_records": 12000,
+      "generation_seconds": 2.053,
+      "target_repayment_rate": 0.7
+    },
+    {
+      "timestamp": "2026-10-21T12:06:50.222019+00:00",
+      "kind": "training_started"
+    },
+    {
+      "timestamp": "2026-10-21T12:06:51.186381+00:00",
+      "kind": "training_completed",
+      "training_seconds": 0.964,
+      "best_iteration": 284,
+      "test_auc": 0.8832
+    },
+    {
+      "timestamp": "2026-10-21T12:06:51.186381+00:00",
+      "kind": "saving_artifacts_started"
+    },
+    {
+      "timestamp": "2026-10-21T12:06:51.274536+00:00",
+      "kind": "saving_artifacts_completed",
+      "save_seconds": 0.088
+    }
+  ]
+}

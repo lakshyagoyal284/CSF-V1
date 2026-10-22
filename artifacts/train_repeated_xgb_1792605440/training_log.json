@@ -1,0 +1,19 @@
+{
+  "run_dir": "artifacts\\train_repeated_xgb_1792605440",
+  "mode": "xgboost repeated cycle until wall clock >= 3h",
+  "metric_optimized": "test_roc_auc",
+  "time_started": "2026-10-21T17:57:20.329287+00:00",
+  "time_ended": "2026-10-21T21:19:10.462546+00:00",
+  "total_seconds": 12110.131114999996,
+  "cycle_count": 1869,
+  "best_cycle": 915,
+  "best_auc": 0.9153158517923541,
+  "best_elapsed_seconds": 0.7224484000034863,
+  "best_model_path": "artifacts\\train_repeated_xgb_1792605440\\best_cycle_915_model.pkl",
+  "best_model_sha256": "36a2ebf6b3c646c89878e858be98aeea839f3175f3025d4bc890a517b9e30361",
+  "best_model_bytes": 154,
+  "source_dataset_rows": 12000,
+  "artifact_type": "xgboost training run artifacts",
+  "generated_by": "ml/train_repeated.py",
+  "completion_status": "completed"
+}

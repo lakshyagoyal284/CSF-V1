@@ -1,0 +1,23 @@
+{
+  "project": "AgriTrust AI",
+  "component": "ml/credit_model",
+  "started_at": "2026-10-21T11:42:36.095129+00:00",
+  "model_artifact": "credit_model.pkl",
+  "model_artifact_sha256": "4c75c1cc66a2c3ae8ec5bbceab80c362a5b5798d025cb87593a7f87327ccde91",
+  "model_artifact_size_mb": 0.179,
+  "artifact_exists": true,
+  "metrics_file": "training_metrics.json",
+  "metrics_exists": true,
+  "importance_files": {
+    "feature_importance.csv": true,
+    "shap_global_importance.csv": true
+  },
+  "trained_at_from_metrics": null,
+  "model_training_rows": 7800,
+  "model_test_rows": 2400,
+  "model_test_roc_auc": 0.8716,
+  "model_test_ks": 0.5926,
+  "model_pipeline": "XGBoost",
+  "model_library": "xgboost",
+  "n_features": 49
+}

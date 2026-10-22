@@ -1,0 +1,274 @@
+{
+  "test": {
+    "accounts": 25178,
+    "default_rate": 0.4653,
+    "roc_auc": 0.8849,
+    "gini": 0.7698,
+    "ks": 0.6258,
+    "pr_auc": 0.8859,
+    "brier_score": 0.1292,
+    "accuracy_at_0_5": 0.8178,
+    "confusion_matrix": {
+      "true_positive": 11998,
+      "true_negative": 8593,
+      "false_positive": 3122,
+      "false_negative": 1465
+    },
+    "default_recall": 0.8912,
+    "default_precision": 0.7935
+  },
+  "train": {
+    "accounts": 81828,
+    "roc_auc": 0.8929
+  },
+  "validation": {
+    "accounts": 18884,
+    "roc_auc": 0.8881,
+    "best_iteration": 299,
+    "epochs_trained": 299
+  },
+  "calibration_deciles": [
+    {
+      "bucket": "(0.00467, 0.0271]",
+      "accounts": 3988,
+      "predicted_default_rate": 0.026100000366568565,
+      "realised_default_rate": 0.0238
+    },
+    {
+      "bucket": "(0.0271, 0.171]",
+      "accounts": 1048,
+      "predicted_default_rate": 0.08209999650716782,
+      "realised_default_rate": 0.0878
+    },
+    {
+      "bucket": "(0.171, 0.266]",
+      "accounts": 2519,
+      "predicted_default_rate": 0.24799999594688416,
+      "realised_default_rate": 0.2791
+    },
+    {
+      "bucket": "(0.266, 0.279]",
+      "accounts": 2516,
+      "predicted_default_rate": 0.27309998869895935,
+      "realised_default_rate": 0.2766
+    },
+    {
+      "bucket": "(0.279, 0.294]",
+      "accounts": 2518,
+      "predicted_default_rate": 0.2851000130176544,
+      "realised_default_rate": 0.2887
+    },
+    {
+      "bucket": "(0.294, 0.499]",
+      "accounts": 2518,
+      "predicted_default_rate": 0.36149999499320984,
+      "realised_default_rate": 0.3189
+    },
+    {
+      "bucket": "(0.499, 0.734]",
+      "accounts": 2517,
+      "predicted_default_rate": 0.6223999857902527,
+      "realised_default_rate": 0.6146
+    },
+    {
+      "bucket": "(0.734, 0.915]",
+      "accounts": 2518,
+      "predicted_default_rate": 0.8327999711036682,
+      "realised_default_rate": 0.8384
+    },
+    {
+      "bucket": "(0.915, 0.976]",
+      "accounts": 2518,
+      "predicted_default_rate": 0.9506999850273132,
+      "realised_default_rate": 0.967
+    },
+    {
+      "bucket": "(0.976, 0.987]",
+      "accounts": 2518,
+      "predicted_default_rate": 0.9815000295639038,
+      "realised_default_rate": 0.9952
+    }
+  ],
+  "segment_breakdown": {
+    "farmer": {
+      "accounts": 1272,
+      "default_rate": 0.2123,
+      "roc_auc": 0.8192
+    },
+    "not_applicable": {
+      "accounts": 21958,
+      "default_rate": 0.4763,
+      "roc_auc": 0.8782
+    },
+    "small_business": {
+      "accounts": 1948,
+      "default_rate": 0.5067,
+      "roc_auc": 0.9338
+    }
+  },
+  "prediction_distribution": {
+    "mean_pd_default": 0.4631,
+    "p10_pd_default": 0.0271,
+    "p90_pd_default": 0.9761,
+    "mean_probability_of_repayment": 0.5369
+  },
+  "overfitting_gap_auc": 0.008,
+  "scorecard": {
+    "score_min_observed": 300,
+    "score_max_observed": 900,
+    "score_mean": 553.4,
+    "score_median": 603,
+    "tier_thresholds": {
+      "low_max_pd": 0.15,
+      "medium_max_pd": 0.35,
+      "score_low_min": 680,
+      "score_medium_min": 580
+    },
+    "tier_counts": {
+      "HIGH": 11104,
+      "MEDIUM": 9138,
+      "LOW": 4936
+    },
+    "tier_rate_by_tier": {
+      "LOW": 0.0346,
+      "MEDIUM": 0.2816,
+      "HIGH": 0.8079
+    }
+  },
+  "top_drivers_by_shap": [
+    {
+      "feature": "region_tier",
+      "label": "Region Tier",
+      "mean_abs_log_odds": 0.5978,
+      "mean_signed_log_odds": -0.1356,
+      "mean_abs_score_points": 53.6,
+      "direction": "mostly increases risk"
+    },
+    {
+      "feature": "proposed_debt_service_ratio",
+      "label": "Proposed Debt Service",
+      "mean_abs_log_odds": 0.5083,
+      "mean_signed_log_odds": -0.313,
+      "mean_abs_score_points": 45.5,
+      "direction": "mostly increases risk"
+    },
+    {
+      "feature": "age",
+      "label": "Applicant Age",
+      "mean_abs_log_odds": 0.4379,
+      "mean_signed_log_odds": -0.157,
+      "mean_abs_score_points": 39.3,
+      "direction": "mostly increases risk"
+    },
+    {
+      "feature": "income_to_debt_ratio",
+      "label": "Income-to-Debt Ratio",
+      "mean_abs_log_odds": 0.321,
+      "mean_signed_log_odds": -0.1374,
+      "mean_abs_score_points": 28.8,
+      "direction": "mostly increases risk"
+    },
+    {
+      "feature": "net_worth",
+      "label": "Net Worth",
+      "mean_abs_log_odds": 0.2693,
+      "mean_signed_log_odds": 0.0936,
+      "mean_abs_score_points": 24.2,
+      "direction": "mostly reduces risk"
+    },
+    {
+      "feature": "annual_income_proxy",
+      "label": "Annual Income Proxy",
+      "mean_abs_log_odds": 0.1927,
+      "mean_signed_log_odds": -0.0036,
+      "mean_abs_score_points": 17.3,
+      "direction": "mixed"
+    },
+    {
+      "feature": "debt_to_asset_ratio",
+      "label": "Debt-to-Asset Ratio",
+      "mean_abs_log_odds": 0.1727,
+      "mean_signed_log_odds": 0.1604,
+      "mean_abs_score_points": 15.4,
+      "direction": "mostly reduces risk"
+    },
+    {
+      "feature": "collateral_coverage_ratio",
+      "label": "Collateral Coverage",
+      "mean_abs_log_odds": 0.1502,
+      "mean_signed_log_odds": -0.0951,
+      "mean_abs_score_points": 13.5,
+      "direction": "mostly increases risk"
+    }
+  ],
+  "model": {
+    "library": "xgboost",
+    "params": {
+      "n_estimators": 300,
+      "learning_rate": 0.03,
+      "max_depth": 4,
+      "min_child_weight": 6,
+      "subsample": 0.85,
+      "colsample_bytree": 0.85,
+      "gamma": 0.0,
+      "reg_lambda": 2.5,
+      "reg_alpha": 0.0,
+      "objective": "binary:logistic"
+    },
+    "n_features": 49,
+    "feature_columns": [
+      "age",
+      "dependents",
+      "years_in_operation",
+      "land_size_acres",
+      "irrigation_score",
+      "soil_quality_score",
+      "crop_yield_annual_value",
+      "land_market_value",
+      "property_value",
+      "equipment_value",
+      "livestock_value",
+      "shop_area_sqft",
+      "inventory_value",
+      "monthly_upi_turnover",
+      "utility_payment_consistency_score",
+      "utility_payment_delays_12m",
+      "avg_monthly_bank_balance",
+      "annual_income_proxy",
+      "outstanding_debt",
+      "monthly_emi_obligation",
+      "requested_loan_amount",
+      "loan_tenure_months",
+      "total_collateral_value",
+      "collateral_coverage_ratio",
+      "debt_to_asset_ratio",
+      "debt_service_ratio",
+      "proposed_instalment",
+      "proposed_debt_service_ratio",
+      "post_facility_loan_to_value",
+      "liquidity_ratio",
+      "income_to_debt_ratio",
+      "net_worth",
+      "asset_productivity",
+      "financial_discipline_score",
+      "applicant_category__farmer",
+      "applicant_category__small_business",
+      "region_tier__rural",
+      "region_tier__semi_urban",
+      "region_tier__urban",
+      "shop_space_ownership__owned",
+      "shop_space_ownership__rented",
+      "shop_space_ownership__not_applicable",
+      "crop_type__rice",
+      "crop_type__wheat",
+      "crop_type__cotton",
+      "crop_type__sugarcane",
+      "crop_type__horticulture",
+      "crop_type__pulses",
+      "crop_type__not_applicable"
+    ],
+    "training_rows": 81828,
+    "validation_rows": 18884,
+    "test_rows": 25178
+  }
+}
