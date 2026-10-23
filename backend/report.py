@@ -185,7 +185,7 @@ def build_decision_letter(
     It is deliberately single-page so the document is easy to print and file.
 
     The text fragments are escaped for PDF content streams, so a literal '(' or
-    ')' in application data is rendered as backslash-escaped\(/\ in the stream.
+    ')' in application data is rendered as backslash-escaped \\( / \\) in the stream.
     That is why assertions against the raw PDF bytes should use the visible text
     form (for example "Pre Approved") rather than the unescaped model value.
     """
@@ -214,9 +214,9 @@ def build_decision_letter(
     limit = _inr(getattr(result, "recommended_limit", None))
     model_version = str(getattr(result, "model_version", "")).strip() or "unversioned"
     recorded_at = str(getattr(result, "generated_at", "")).strip() or "not recorded"
-    decline_option = str(getattr(result, "decline_option", "")).strip() or "not offered"
+    decline_option = str((getattr(result, "decline_option", None) or "")).strip() or "not offered"
     decline_option_label = decline_option.replace("_", " ").title() or "Decline not offered"
-    decline_reason = str(getattr(result, "decline_reason", "")).strip() or ""
+    decline_reason = str((getattr(result, "decline_reason", None) or "")).strip() or ""
     decline_reason_short = (decline_reason[:120] + "…") if len(decline_reason) > 120 else decline_reason
 
     factors: list[tuple[int, str, str | None]] = []
@@ -283,28 +283,6 @@ def build_decision_letter(
         page.append(_line(label, 54, base, "F2", 8.5, "0.5 G"))
         page.append(_line(value, left, base, "F1", 8.5))
 
-    # Decision issued by block — bank and banker below the applicant box
-    issuer_block = _issuer_block(bank_name, banker_name, banker_email, generated_at, box_top=name_box_bottom - 6)
-    page.extend(issuer_block)
-    issuer_bottom = name_box_bottom - 6 - 58
-
-    # Applicant summary block below the issuer block
-    summary_y = issuer_bottom - 10
-    page.append(_line("Applicant summary", 54, summary_y, "F2", 11, "0 0 0 RG"))
-    page.append(_line_rule(54, summary_y - 4, 541, summary_y - 4, "0.3 G"))
-
-    summary: list[tuple[int, str, str]] = [
-        (180, "Applicant", applicant),
-        (335, "Segment / region", f"{segment} · {region}"),
-        (180, "Requested facility", f"{requested} over {tenure} months"),
-        (335, "Application No.", app_id),
-    ]
-    for index, (left, label, value) in enumerate(summary):
-        base = summary_y - 24 - (index * 17)
-        page.append(_line(label, 54, base, "F2", 8.5, "0.5 G"))
-        page.append(_line(value, left, base, "F1", 8.5))
-
-    # Scorecard block
     score_y = issuer_bottom - 152
     page.append(_line_rule(54, score_y + 6, 541, score_y + 6, "0.13 G"))
     page.append(_line("Credit decision", 54, score_y, "F2", 11, "0 0 0 RG"))
@@ -323,11 +301,12 @@ def build_decision_letter(
         base = score_y - 20 - (index * 16.5)
         page.append(_line(label, 54, base, "F2", 8.75, "0.5 G"))
         if label in ("Decision", "Decline option"):
+            page.append(_line(value, left, base, "F1", 8.75, "0 0 0 RG"))
+        elif label == "Decline reason":
+            page.append(_line(value, left, base, "F1", 8.75, ("0.1 G" if value else "0 0 0 RG")))
+        else:
             base = score_y - 20 - (index * 16.5)
             page.append(_line(value, left, base, "F1", 8.75, "0 0 0 RG"))
-        elif label == "Decline reason" and value:
-            base = score_y - 20 - (index * 16.5)
-            page.append(_line(value, left, base, "F1", 8.75, "0.1 G"))
 
     factors_y = issuer_bottom - 308
     page.append(_line_rule(54, factors_y + 6, 541, factors_y + 6, "0.13 G"))
