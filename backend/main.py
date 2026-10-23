@@ -2,8 +2,8 @@
 
 Run locally::
 
-    python train_model.py                                       # legacy synthetic model
-    python -c "from ml.integrate_external_datasets import build_unified_portfolio; from ml.train import train_model, save_artifacts; port=build_unified_portfolio(use_bank=True,use_mortgage=True,use_credit_ratings=True,use_synthetic=True,bank_sample_rows=60000,mortgage_sample_rows=60000); r=train_model(port,seed=42,early_stopping_patience=120); save_artifacts(r,portfolio=port,data_report={'source':'combined','rows':len(port)},model_path='artifacts/credit_model_combined.pkl')"   # combined model
+    python train_model.py                    # the served model (synthetic portfolio)
+    python scripts/train_combined.py         # optional, experimental mixed-source model
     uvicorn backend.main:app --reload --port 8000
 
 Interactive docs: http://localhost:8000/docs
@@ -59,6 +59,23 @@ async def lifespan(app: FastAPI):
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
     )
+
+    if settings.jwt_secret.startswith("agritrust-dev-secret"):
+        logger.warning(
+            "ACS_JWT_SECRET is the insecure demo default. Set a strong secret "
+            "before exposing this service beyond localhost."
+        )
+    if settings.portal_seed_demo and not settings.portal_database_url.startswith("sqlite"):
+        logger.warning(
+            "Demo accounts with known passwords are being seeded into a "
+            "non-SQLite database. Set ACS_PORTAL_SEED_DEMO=false in a real deployment."
+        )
+    if str(settings.model_path).endswith("credit_model_combined.pkl"):
+        logger.warning(
+            "Serving the EXPERIMENTAL mixed-source model. Its labels are proxies "
+            "(bank approval, mortgage history depth, issuer ratings), not repayment "
+            "outcomes. See docs/MODEL_CARD.md. Use artifacts/credit_model.pkl for demos."
+        )
 
     registry = get_registry(settings.model_path)
     try:

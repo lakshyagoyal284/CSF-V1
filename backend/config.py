@@ -28,12 +28,13 @@ class Settings(BaseSettings):
     )
 
     # --- artifacts ------------------------------------------------------------
-    #: Default serving model for the API. The combined model trained on bank,
-    #: mortgage, credit-rating and synthetic data is the current recommended
-    #: default because it has stronger hold-out metrics and cleaner tier
-    #: separation. The legacy synthetic model is still produced by
-    #: ``python train_model.py`` and can be swapped back in via this setting.
-    model_path: str = "artifacts/credit_model_combined.pkl"  # preferred serving default; set ACS_MODEL_PATH to override
+    #: Default serving model. This is the model produced by
+    #: ``python train_model.py`` from the synthetic portfolio, which is the only
+    #: dataset with a defensible repayment label. The experimental combined
+    #: artifact (bank approvals + mortgage history + issuer ratings) can be
+    #: selected explicitly with ``ACS_MODEL_PATH=artifacts/credit_model_combined.pkl``;
+    #: see ``docs/MODEL_CARD.md`` for why it must not be the default.
+    model_path: str = "artifacts/credit_model.pkl"
     #: Fail fast at boot when the artifact is missing instead of 503-ing later.
     require_model_on_startup: bool = True
 

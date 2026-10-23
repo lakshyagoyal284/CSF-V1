@@ -175,6 +175,13 @@ class ApplicationCreate(BaseModel):
 
     assets: AssetDeclarationIn = Field(default_factory=AssetDeclarationIn)
 
+    #: The borrower's declaration/consent checkbox. Recorded as an audit entry so
+    #: the bank has a timestamped consent artefact, not just a client-side tick.
+    consent_accepted: bool = Field(
+        default=False,
+        description="Borrower confirms the declaration and consents to verification.",
+    )
+
     @field_validator("applicant_name", mode="before")
     @classmethod
     def _strip_name(cls, value: Any) -> Any:
@@ -203,6 +210,11 @@ class ApplicationCreate(BaseModel):
             raise ValueError(
                 "Declare at least one income proxy: UPI volume, annual income, "
                 "or annual crop value."
+            )
+
+        if not self.consent_accepted:
+            raise ValueError(
+                "The borrower must accept the declaration and consent to verification."
             )
         return self
 
@@ -349,6 +361,8 @@ class ScoreResultOut(BaseModel):
     explainability: Explainability
     model_version: str
     generated_at: datetime
+    decline_option: str | None = None
+    decline_reason: str | None = None
 
 
 class BankerApplicationSummary(BaseModel):
@@ -416,11 +430,22 @@ class VerifyRequest(BaseModel):
 class VerifyAndScoreRequest(VerifyRequest):
     """Payload for ``POST /api/banker/verify-and-score/{app_id}``."""
 
+    decline_option: str | None = Field(default=None, max_length=32)
+    decline_reason: str | None = Field(default=None, max_length=4_000)
+
 
 class RejectRequest(BaseModel):
     model_config = _STRICT
 
     reason: str = Field(min_length=5, max_length=2_000)
+
+
+class DocumentRejectRequest(BaseModel):
+    """Reject a single proof (illegible, mismatched, expired, ...)."""
+
+    model_config = _STRICT
+
+    reason: str = Field(min_length=5, max_length=1_000)
 
 
 class AuditEntry(BaseModel):

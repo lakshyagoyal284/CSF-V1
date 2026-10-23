@@ -33,7 +33,6 @@ from ml.config import (
     CATEGORY_DISPLAY_NAMES,
     CATEGORY_LEVELS,
     COLUMN_TO_GROUP,
-    DEFAULT_MODEL_PATH,
     FEATURE_COLUMNS,
     FEATURE_GROUPS,
     SCORE_FACTOR,
@@ -107,7 +106,11 @@ def _select_positive_class(raw: Any) -> np.ndarray:
     raise ValueError(f"Unexpected shap_values shape: {array.shape}")
 
 
-def _explainability_backend(model: Any, feature_columns: list[str]) -> tuple[Any, bool]:
+def _explainability_backend(
+    model: Any,
+    feature_columns: list[str],
+    background: Any | None = None,
+) -> tuple[Any, bool]:
     """Return ``(explainer, is_tree)``.
 
     Tree ensembles get ``shap.TreeExplainer`` (exact, fast, additive). Every
@@ -121,34 +124,38 @@ def _explainability_backend(model: Any, feature_columns: list[str]) -> tuple[Any
         return shap.TreeExplainer(model), True
 
     predict_fn = lambda x: np.asarray(model.predict_proba(x)[:, 1])
-    background = features_to_array(feature_columns)
-    if background is None:
+    array = features_to_array(background, feature_columns)
+    if array is None:
         return None, False
-    if len(background) > 200:
-        background = background[:: max(1, len(background) // 200)]
-    return shap.KernelExplainer(predict_fn, background), False
+    if len(array) > 200:
+        array = array[:: max(1, len(array) // 200)]
+    return shap.KernelExplainer(predict_fn, array), False
 
 
-def features_to_array(feature_columns: list[str]) -> np.ndarray | None:
-    """Best-effort construction of a background feature array from the live
-    environment (database reference sample or synthetic fallback).
+def features_to_array(
+    background: Any | None,
+    feature_columns: list[str],
+) -> np.ndarray | None:
+    """Turn a bundle-provided reference sample into a KernelExplainer background.
 
-    Returns ``None`` when no background data is available, in which case the
-    caller keeps using the per-request matrix (KernelExplainer then falls back
-    to a trivial baseline so ``shap_matrix`` never raises for a non-tree model).
+    The sample must come from the artifact bundle that is actually being served;
+    loading a fixed path here would explain a non-tree challenger against the
+    wrong population. Returns ``None`` when no background is available, in which
+    case the caller falls back to a trivial baseline rather than failing.
     """
-    # Prefer the reference sample shipped in the artifact bundle.
+    if background is None:
+        return None
     try:
-        import joblib
-
-        bundle = joblib.load(DEFAULT_MODEL_PATH)
-        if "reference_feature_sample" in bundle and bundle["reference_feature_sample"] is not None:
-            ref = bundle["reference_feature_sample"]
-            if ref is not None and len(ref) > 0:
-                return ref.reindex(columns=feature_columns).to_numpy(dtype=float)
-    except Exception:
-        pass
-    return None
+        if isinstance(background, pd.DataFrame):
+            if background.empty:
+                return None
+            return background.reindex(columns=feature_columns).to_numpy(dtype=float)
+        array = np.asarray(background, dtype=float)
+        if array.ndim != 2 or array.shape[0] == 0:
+            return None
+        return array
+    except (TypeError, ValueError):
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -169,10 +176,19 @@ class CreditExplainer:
     active.
     """
 
-    def __init__(self, model: Any, *, feature_columns: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        model: Any,
+        *,
+        feature_columns: list[str] | None = None,
+        background: Any | None = None,
+    ) -> None:
         self._model = model
         self._feature_columns = feature_columns or []
-        self.explainer, self._is_tree = _explainability_backend(model, self._feature_columns)
+        self._provided_background = background
+        self.explainer, self._is_tree = _explainability_backend(
+            model, self._feature_columns, background
+        )
         self._background: np.ndarray | None = None
         if self.explainer is not None and not self._is_tree:
             self._ensure_background()
@@ -183,7 +199,7 @@ class CreditExplainer:
             return
         if hasattr(self.explainer, "background_data"):
             return
-        background = features_to_array(self._feature_columns)
+        background = features_to_array(self._provided_background, self._feature_columns)
         if background is None:
             # No background: KernelExplainer has no mean-prediction anchor, so
             # fall back to a query-point approximation to keep the API usable.

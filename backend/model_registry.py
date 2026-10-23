@@ -122,6 +122,7 @@ class ModelRegistry:
             )
 
         model = bundle["model"]
+        reference_sample = bundle.get("reference_feature_sample")
         logger.info(
             "Loaded credit model from %s (trained_at=%s, rows=%s)",
             self.model_path,
@@ -130,7 +131,11 @@ class ModelRegistry:
         )
         return LoadedModel(
             model=model,
-            explainer=CreditExplainer(model, feature_columns=columns),
+            explainer=CreditExplainer(
+                model,
+                feature_columns=columns,
+                background=reference_sample,
+            ),
             feature_columns=columns,
             metadata={
                 "trained_at": bundle.get("trained_at"),
@@ -138,7 +143,7 @@ class ModelRegistry:
                 "metrics": bundle.get("metrics", {}),
                 "data_report": bundle.get("data_report", {}),
             },
-            reference_sample=bundle.get("reference_feature_sample"),
+            reference_sample=reference_sample,
             path=self.model_path,
         )
 

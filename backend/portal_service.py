@@ -52,6 +52,7 @@ from backend.portal_schemas import (
     VerifyRequest,
 )
 from backend import service as scoring_service
+from backend.report import build_decision_letter
 from backend.storage import ALLOWED_DOC_TYPES, DocumentStorage, DocumentStorageError, StoredDocument
 from ml.config import TIER_LABELS
 
@@ -161,6 +162,9 @@ def _application_payload(application: Application) -> ApplicationCreate:
         loan_tenure_months=application.loan_tenure_months,
         outstanding_debt=float(application.outstanding_debt),
         monthly_emi_obligation=float(application.monthly_emi_obligation),
+        # The stored file can only exist because consent was given at submission;
+        # the timestamped proof lives in underwriting_audit_log.
+        consent_accepted=True,
         assets={
             "land_acres": assets.land_acres,
             "soil_quality": assets.soil_quality,
@@ -334,6 +338,17 @@ def create_application(
                 "documents": len(application.documents),
                 "requested_loan_amount": float(application.requested_loan_amount),
                 "status": "pending",
+            },
+        )
+        _audit(
+            db,
+            application.id,
+            borrower,
+            "borrower_consent",
+            {
+                "accepted_at": datetime.now(timezone.utc).isoformat(),
+                "declaration": "accuracy_and_verification_consent",
+                "version": "1.0",
             },
         )
         db.commit()
@@ -712,11 +727,18 @@ def score_application(
         model_version=response.model_version,
         decided_by=banker.id,
         officer_notes=request.officer_notes,
+        decline_option=getattr(response, "decline_option", None),
+        decline_reason=getattr(response, "decline_reason", None),
     )
     db.add(result)
 
-    application.status = "scored"
-    application.scored_at = now
+    if getattr(request, "decline_option", None):
+        application.status = "rejected"
+        decline_reason = getattr(request, "decline_reason", None) or "Declined by officer."
+        application.rejection_reason = decline_reason.strip() or "Declined by officer."
+    else:
+        application.status = "scored"
+        application.scored_at = now
 
     _audit(
         db,
@@ -745,6 +767,65 @@ def score_application(
         response.risk_tier,
     )
     return _score_out(result)
+
+
+def reject_document(
+    db: Session,
+    banker: User,
+    app_id: str,
+    document_id: str,
+    reason: str,
+) -> BankerApplicationDetail:
+    """Mark one proof as rejected with a reason (illegible, mismatched, expired)."""
+    application = _load_application(db, app_id)
+    if application.status in ("scored", "rejected"):
+        raise _http(
+            status.HTTP_409_CONFLICT,
+            "invalid_state",
+            "Documents cannot be rejected after a file is scored or rejected.",
+        )
+
+    document = next((doc for doc in application.documents if doc.id == document_id), None)
+    if document is None:
+        raise _http(
+            status.HTTP_404_NOT_FOUND,
+            "document_not_found",
+            "That document does not belong to this application.",
+        )
+
+    now = datetime.now(timezone.utc)
+    document.verified_status = "rejected"
+    document.notes = reason
+    document.verified_by = banker.id
+    document.verified_at = now
+    _audit(
+        db,
+        application.id,
+        banker,
+        "document_rejected",
+        {"document_id": document.id, "doc_type": document.doc_type, "reason": reason},
+    )
+    db.commit()
+    return get_banker_application(db, app_id)
+
+
+def list_score_history(db: Session, app_id: str) -> list[ScoreResultOut]:
+    """Every persisted decision for a file, newest first (append-only history)."""
+    application = _load_application(db, app_id)
+    return [_score_out(result) for result in application.scores]
+
+
+def decision_letter_pdf(db: Session, app_id: str) -> bytes:
+    """Render the latest decision as a borrower-facing PDF letter."""
+    application = _load_application(db, app_id)
+    latest = application.latest_score
+    if latest is None:
+        raise _http(
+            status.HTTP_404_NOT_FOUND,
+            "not_scored",
+            "A decision letter cannot be generated before the file is scored.",
+        )
+    return build_decision_letter(application, latest)
 
 
 def reject_application(

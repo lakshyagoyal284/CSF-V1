@@ -54,6 +54,7 @@ def register_borrower(client, *, name: str = "Asha Kumari") -> dict[str, str]:
 def farmer_payload(**overrides: Any) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "applicant_name": "Asha Kumari",
+        "consent_accepted": True,
         "applicant_category": "farmer",
         "region_tier": "rural",
         "age": 44,
@@ -409,3 +410,105 @@ def test_demo_application_is_created_with_previewable_proofs(client, banker_head
     assert application["document_count"] >= 2
     assert application["applicant_category"] == "farmer"
     assert application["documents"][0]["file_url"].startswith("/api/files/")
+
+
+# ---------------------------------------------------------------------------
+# consent, proof rejection, decision history and letter
+# ---------------------------------------------------------------------------
+
+
+def test_submission_without_consent_is_refused(client):
+    headers = register_borrower(client)
+    response = submit_application(
+        client, headers, payload=farmer_payload(consent_accepted=False)
+    )
+    assert response.status_code == 422
+    assert "consent" in response.text.lower()
+
+
+def test_consent_is_recorded_in_the_audit_log(client, banker_headers):
+    _, application = create_pending_application(client)
+    trail = client.get(
+        f"/api/banker/applications/{application['id']}/audit", headers=banker_headers
+    )
+    assert trail.status_code == 200
+    actions = [entry["action"] for entry in trail.json()["items"]]
+    assert "borrower_consent" in actions
+
+
+def test_document_rejection_is_audited_and_blocks_scoring(client, banker_headers):
+    _, application = create_pending_application(client)
+    app_id = application["id"]
+    first_doc = application["documents"][0]["id"]
+    second_doc = application["documents"][1]["id"]
+
+    rejected = client.post(
+        f"/api/banker/applications/{app_id}/documents/{first_doc}/reject",
+        headers=banker_headers,
+        json={"reason": "Land record is illegible and cannot be reconciled."},
+    )
+    assert rejected.status_code == 200, rejected.text
+    document = next(doc for doc in rejected.json()["documents"] if doc["id"] == first_doc)
+    assert document["verified_status"] == "rejected"
+    assert "illegible" in document["notes"]
+
+    # Verify only the second proof, then remove it from the verified set by
+    # rejecting it: no verified proof remains, so scoring must be refused.
+    verified = client.post(
+        f"/api/banker/applications/{app_id}/verify",
+        headers=banker_headers,
+        json={"verified_fields": ["land_acres"], "document_ids": [second_doc]},
+    )
+    assert verified.status_code == 200, verified.text
+
+    client.post(
+        f"/api/banker/applications/{app_id}/documents/{second_doc}/reject",
+        headers=banker_headers,
+        json={"reason": "Utility statement does not match the declared address."},
+    )
+    blocked = client.post(
+        f"/api/banker/verify-and-score/{app_id}",
+        headers=banker_headers,
+        json={},
+    )
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"]["error"] == "verification_required"
+
+
+def test_score_history_appends_and_decision_letter_is_a_pdf(client, banker_headers):
+    _, application = create_pending_application(client)
+    app_id = application["id"]
+
+    missing = client.get(
+        f"/api/banker/applications/{app_id}/decision-letter", headers=banker_headers
+    )
+    assert missing.status_code == 404
+
+    first = client.post(
+        f"/api/banker/verify-and-score/{app_id}",
+        headers=banker_headers,
+        json={"verify_all": True},
+    )
+    assert first.status_code == 200, first.text
+    second = client.post(
+        f"/api/banker/verify-and-score/{app_id}",
+        headers=banker_headers,
+        json={},
+    )
+    assert second.status_code == 200, second.text
+
+    history = client.get(
+        f"/api/banker/applications/{app_id}/history", headers=banker_headers
+    )
+    assert history.status_code == 200
+    entries = history.json()
+    assert len(entries) == 2
+    assert entries[0]["generated_at"] >= entries[1]["generated_at"]
+
+    letter = client.get(
+        f"/api/banker/applications/{app_id}/decision-letter", headers=banker_headers
+    )
+    assert letter.status_code == 200
+    assert letter.headers["content-type"].startswith("application/pdf")
+    assert letter.content.startswith(b"%PDF-")
+    assert b"Credit Decision Letter" in letter.content

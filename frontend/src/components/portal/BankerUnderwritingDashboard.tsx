@@ -102,9 +102,13 @@ export function BankerUnderwritingDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<string[]>([]);
   const [preview, setPreview] = useState<DocumentProof | null>(null);
+  const [audit, setAudit] = useState<AuditEntry[]>([]);
+  const [history, setHistory] = useState<ScoreResult[]>([]);
   const [rejecting, setRejecting] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
-  const [audit, setAudit] = useState<AuditEntry[]>([]);
+  const [declining, setDeclining] = useState(false);
+  const [declineReason, setDeclineReason] = useState("");
+  const [declineBusy, setDeclineBusy] = useState(false);
 
   const handleApiError = useCallback(
     (caught: unknown) => {
@@ -137,9 +141,10 @@ export function BankerUnderwritingDashboard() {
   }, []);
 
   const applyDetail = useCallback(
-    (application: BankerApplicationDetail, trail: AuditEntry[]) => {
+    (application: BankerApplicationDetail, trail: AuditEntry[], scores: ScoreResult[] = []) => {
       setDetail(application);
       setAudit(trail);
+      setHistory(scores);
       setSelectedFields(new Set(application.assets?.verified_fields ?? []));
       setSelectedDocs(
         new Set(
@@ -149,8 +154,6 @@ export function BankerUnderwritingDashboard() {
         ),
       );
       setNotes("");
-      setRejecting(false);
-      setRejectReason("");
       setError(null);
       setFieldErrors([]);
     },
@@ -175,11 +178,12 @@ export function BankerUnderwritingDashboard() {
     async (id: string) => {
       if (!token) return;
       try {
-        const [application, trail] = await Promise.all([
+        const [application, trail, scores] = await Promise.all([
           portalApi.bankerApplication(token, id),
           portalApi.auditTrail(token, id).catch(() => ({ items: [] as AuditEntry[] })),
+          portalApi.scoreHistory(token, id).catch(() => [] as ScoreResult[]),
         ]);
-        applyDetail(application, trail.items);
+        applyDetail(application, trail.items, scores);
       } catch (caught) {
         handleApiError(caught);
       } finally {
@@ -215,10 +219,11 @@ export function BankerUnderwritingDashboard() {
     Promise.all([
       portalApi.bankerApplication(token, selectedId),
       portalApi.auditTrail(token, selectedId).catch(() => ({ items: [] as AuditEntry[] })),
+      portalApi.scoreHistory(token, selectedId).catch(() => [] as ScoreResult[]),
     ]).then(
-      ([application, trail]) => {
+      ([application, trail, scores]) => {
         if (cancelled) return;
-        applyDetail(application, trail.items);
+        applyDetail(application, trail.items, scores);
         setLoadingDetail(false);
       },
       (caught: unknown) => {
@@ -291,6 +296,26 @@ export function BankerUnderwritingDashboard() {
     }
   };
 
+  const downloadLetter = async () => {
+    if (!token || !detail) return;
+    setBusy(true);
+    try {
+      const url = await portalApi.decisionLetter(token, detail.id);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `decision-${detail.id.slice(0, 8)}.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      // Give the browser time to start the download before revoking the blob.
+      window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    } catch (caught) {
+      handleApiError(caught);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const reject = async () => {
     if (!token || !detail) return;
     if (rejectReason.trim().length < 5) {
@@ -309,6 +334,37 @@ export function BankerUnderwritingDashboard() {
       setBusy(false);
     }
   };
+
+  const startReject = () => setRejecting(true);
+
+  const decline = async () => {
+    if (!token || !detail) return;
+    if (!declineReason.trim()) {
+      setError("Add a decline reason before declining.");
+      return;
+    }
+    setDeclineBusy(true);
+    try {
+      await portalApi.verifyAndScore(token, detail.id, {
+        verified_fields: [...selectedFields],
+        document_ids: [...selectedDocs],
+        officer_notes: notes.trim() || null,
+        decline_option: "decline",
+        decline_reason: declineReason.trim(),
+      });
+      await loadDetail(detail.id);
+      if (filter === "all") await loadQueue("all");
+      else setFilter("all");
+      setDeclineReason("");
+      setDeclining(false);
+    } catch (caught) {
+      handleApiError(caught);
+    } finally {
+      setDeclineBusy(false);
+    }
+  };
+
+  const startDecline = () => setDeclining(true);
 
   const loadDemo = async () => {
     if (!token) return;
@@ -744,13 +800,33 @@ export function BankerUnderwritingDashboard() {
                               ? "Recalculate score"
                               : "Verify & calculate score"}
                         </button>
+                        {latest && (
+                          <button
+                            type="button"
+                            onClick={() => void downloadLetter()}
+                            disabled={busy}
+                            data-testid="download-decision-letter"
+                            className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+                          >
+                            Decision letter
+                          </button>
+                        )}
                         {detail.status !== "rejected" && detail.status !== "scored" && (
                           <button
                             type="button"
-                            onClick={() => setRejecting((current) => !current)}
+                            onClick={() => void startReject()}
                             className="rounded-lg border border-rose-200 px-3 py-2 text-xs font-medium text-rose-700 transition hover:bg-rose-50"
                           >
                             Reject
+                          </button>
+                        )}
+                        {latest && (
+                          <button
+                            type="button"
+                            onClick={() => void startDecline()}
+                            className="rounded-lg border border-rose-200 px-3 py-2 text-xs font-medium text-rose-700 transition hover:bg-rose-50"
+                          >
+                            Decline
                           </button>
                         )}
                       </div>
@@ -792,12 +868,72 @@ export function BankerUnderwritingDashboard() {
                           </div>
                         </div>
                       )}
+
+                      {declining && (
+                        <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3">
+                          <label className="block text-[10px] font-medium uppercase tracking-wide text-rose-700">
+                            Decline reason (required)
+                          </label>
+                          <textarea
+                            value={declineReason}
+                            onChange={(event) => setDeclineReason(event.target.value)}
+                            rows={2}
+                            placeholder="Why the bank cannot approve this file…"
+                            className="mt-1 w-full rounded-lg border border-rose-200 bg-white px-2 py-1.5 text-xs text-slate-800"
+                          />
+                          <div className="mt-2 flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void decline()}
+                              disabled={busy || declineBusy}
+                              className="rounded-lg bg-rose-600 px-2.5 py-1.5 text-[11px] font-semibold text-white transition hover:bg-rose-500 disabled:opacity-60"
+                            >
+                              Confirm decline
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDeclining(false)}
+                              className="rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-rose-700"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
                     </div>
 
                     {latest && (
                       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                         <ShapFactorList explainability={latest.explainability} />
                       </div>
+                    )}
+
+                    {history.length > 0 && (
+                      <details
+                        className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
+                        data-testid="decision-history"
+                      >
+                        <summary className="cursor-pointer text-xs font-semibold text-slate-700">
+                          Decision history ({history.length})
+                        </summary>
+                        <ol className="mt-2 space-y-1.5">
+                          {history.map((entry) => (
+                            <li
+                              key={entry.id}
+                              className="flex items-start justify-between gap-2 text-[10px]"
+                            >
+                              <span className="text-slate-600">
+                                {entry.credit_score} · {entry.risk_tier} ·{" "}
+                                {formatINR(entry.recommended_limit)}
+                              </span>
+                              <span className="shrink-0 text-slate-400">
+                                {formatDateTime(entry.generated_at)}
+                              </span>
+                            </li>
+                          ))}
+                        </ol>
+                      </details>
                     )}
 
                     {audit.length > 0 && (

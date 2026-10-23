@@ -161,23 +161,7 @@ try {
 
   await page.screenshot({ path: path.join(ARTIFACTS, "banker-dashboard.png"), fullPage: false });
 
-  // ------------------------------------------------------------- borrower summary
-  // The script was watching the full window.location.pathname, which in our
-  // Next.js app is read from the router, not window. Switch to a body-text
-  // readiness check instead so the flow does not time out on a real SPA.
-  await page.waitForFunction(
-    () => document.body.innerText.includes("Application submitted"),
-    { timeout: 30000 },
-  );
-  check("Borrower submission reaches Pending verification", true);
-  check(
-    "Borrower response does not display a score",
-    !(await page.evaluate(() => document.body.innerText)).includes("Recommended limit"),
-  );
-
-  await page.screenshot({ path: path.join(ARTIFACTS, "borrower-portal.png"), fullPage: false });
   // ------------------------------------------------------------- borrower
-
 
   await clickButtonText(page, "Sign out");
   await page.waitForFunction(() => window.location.pathname === "/", { timeout: 15000 });

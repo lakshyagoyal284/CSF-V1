@@ -11,6 +11,13 @@ Design notes
   straight into :mod:`ml.train`.
 * It does **not** fabricate labels for ``application_test.csv``. That file is
   used as score/demo data only.
+* The three external labels are **proxies, not repayment outcomes**. A bank
+  approval is a decision, ``Loans Repaid`` is a history-length count and issuer
+  rating migration is not applicant-level. Every row therefore carries a
+  ``source`` column, and the training report surfaces the mix so the headline
+  metric can never be mistaken for applicant credit performance. The combined
+  artifact is experimental; the default served model remains the synthetic
+  portfolio model.
 * It keeps the existing ``data/synthetic_portfolio.csv`` in the training mix
   because the current engine, scorecard scaling and SHAP explanations are built
   around that feature space.
@@ -122,8 +129,9 @@ def refine_bank(frame: pd.DataFrame) -> pd.DataFrame:
     out["region_tier"] = "not_applicable"
     out["shop_space_ownership"] = "not_applicable"
     out["crop_type"] = "not_applicable"
+    out["source"] = "bank"
 
-    # Target
+    # Target: the bank's own approval decision (a policy outcome, not repayment).
     status = out["loan_status"].astype("string").str.strip().str.lower()
     valid_mask = status.notna() & status.isin(["approved", "rejected"])
     out = out.loc[valid_mask].copy()
@@ -179,8 +187,10 @@ def refine_mortgage(frame: pd.DataFrame) -> pd.DataFrame:
 
     out["shop_space_ownership"] = "not_applicable"
     out["crop_type"] = "not_applicable"
+    out["source"] = "mortgage"
 
-    # Target
+    # Target: number of loans repaid in the applicant's history (depth, not the
+    # outcome of the facility being applied for).
     repaid = _coerce_numeric(out, "Loans Repaid")
     valid_mask = repaid.notna()
     out = out.loc[valid_mask].copy()
@@ -209,6 +219,8 @@ def refine_credit_ratings(frame: pd.DataFrame) -> pd.DataFrame:
     for column in RAW_CATEGORICAL_FEATURES:
         out[column] = "not_applicable"
 
+    out["source"] = "credit_ratings"
+
     defaulted = _coerce_numeric(out, "defaulted")
     valid_mask = defaulted.notna()
     out = out.loc[valid_mask].copy()
@@ -225,6 +237,8 @@ def load_synthetic() -> pd.DataFrame:
     df = pd.read_csv(path)
     if TARGET_COLUMN not in df.columns:
         return pd.DataFrame()
+    if "source" not in df.columns:
+        df["source"] = "synthetic"
     return df
 
 

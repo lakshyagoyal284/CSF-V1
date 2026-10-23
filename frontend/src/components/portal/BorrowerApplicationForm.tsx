@@ -304,6 +304,7 @@ export function BorrowerApplicationForm({
 
     return {
       applicant_name: form.applicant_name.trim(),
+      consent_accepted: true,
       phone: form.phone.trim() || null,
       applicant_category: form.applicant_category,
       region_tier: form.region_tier,

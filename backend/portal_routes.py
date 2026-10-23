@@ -57,7 +57,7 @@ from backend.auth import (
 )
 from backend.config import get_settings
 from backend.demo_data import create_demo_application
-from backend.model_registry import get_registry
+from backend.model_registry import ModelNotAvailable, get_registry
 from backend.portal_db import get_db
 from backend.portal_models import DocumentProof, User
 from backend.portal_schemas import (
@@ -66,6 +66,7 @@ from backend.portal_schemas import (
     AuditTrailResponse,
     BankerApplicationDetail,
     BorrowerApplicationOut,
+    DocumentRejectRequest,
     LoginRequest,
     RegisterRequest,
     RejectRequest,
@@ -80,13 +81,16 @@ from backend.portal_service import (
     add_documents,
     create_application,
     create_borrower,
+    decision_letter_pdf,
     get_borrower_application,
     get_banker_application,
     get_latest_score,
     list_audit_entries,
     list_borrower_applications,
     list_banker_applications,
+    list_score_history,
     reject_application,
+    reject_document,
     score_application,
     verify_application,
 )
@@ -426,6 +430,53 @@ def latest_score(app_id: str, banker: BankerUser, db: DbSession) -> ScoreResultO
             detail={"error": "not_scored", "message": "This application has not been scored yet."},
         )
     return result
+
+
+@router.get(
+    "/banker/applications/{app_id}/history",
+    response_model=list[ScoreResultOut],
+    tags=["banker"],
+    summary="Every persisted score for an application (append-only history)",
+)
+def score_history(
+    app_id: str, banker: BankerUser, db: DbSession
+) -> list[ScoreResultOut]:
+    return list_score_history(db, app_id)
+
+
+@router.get(
+    "/banker/applications/{app_id}/decision-letter",
+    tags=["banker"],
+    summary="Download the latest decision as a PDF letter",
+    response_class=Response,
+)
+def decision_letter(app_id: str, banker: BankerUser, db: DbSession) -> Response:
+    content = decision_letter_pdf(db, app_id)
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="decision-{app_id[:8]}.pdf"',
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.post(
+    "/banker/applications/{app_id}/documents/{document_id}/reject",
+    response_model=BankerApplicationDetail,
+    tags=["banker"],
+    summary="Reject a single proof with a reason",
+)
+def reject_document_route(
+    app_id: str,
+    document_id: str,
+    request: DocumentRejectRequest,
+    banker: BankerUser,
+    db: DbSession,
+) -> BankerApplicationDetail:
+    return reject_document(db, banker, app_id, document_id, request.reason)
 
 
 @router.post(

@@ -92,7 +92,8 @@ Borrower portal (Next.js)                 Banker desk (Next.js)
 - **Auth:** PBKDF2-SHA256 password hashes and HS256 JWTs. Every banker route has
   a server-side role dependency; the database role is authoritative, not the
   token claim.
-- **Audit:** submissions, verifications, scores and rejections append to
+- **Audit:** submissions (including the borrower's consent record), verifications,
+  document rejections, scores and application rejections append to
   `underwriting_audit_log`; scores append to `credit_score_results` so a re-score
   never overwrites history.
 
@@ -114,6 +115,9 @@ Borrower portal (Next.js)                 Banker desk (Next.js)
 | POST | `/api/banker/applications/{id}/verify` | banker | Mark fields/proofs verified |
 | POST | `/api/banker/verify-and-score/{id}` | banker | Verify + XGBoost + SHAP + persist |
 | GET | `/api/banker/applications/{id}/score` | banker | Latest result |
+| GET | `/api/banker/applications/{id}/history` | banker | Append-only decision history |
+| GET | `/api/banker/applications/{id}/decision-letter` | banker | PDF decision letter |
+| POST | `/api/banker/applications/{id}/documents/{doc_id}/reject` | banker | Reject one proof with a reason |
 | POST | `/api/banker/applications/{id}/reject` | banker | Reject with reason |
 | GET | `/api/banker/applications/{id}/audit` | banker | Workflow trail |
 | POST | `/api/banker/demo-applications` | banker | Demo file with PDF proofs |
@@ -153,13 +157,21 @@ banker JWT as well, so the model is never executable without the banker role.
    `feature_importance.csv`, `shap_global_importance.csv` and the generated
    portfolio CSV.
 
-Shipped artifact, 7,800 training / 2,400 test rows:
+Generated artifact (git-ignored; rebuild with `python train_model.py`), 7,800 training / 2,400 test rows:
 
 ```
-ROC-AUC  0.862     Gini 0.723     KS 0.590
-PR-AUC   0.945     Brier 0.112
+ROC-AUC  0.8715    Gini 0.7429    KS 0.5825
+PR-AUC   0.9528    Brier 0.1097
 Tier cut-offs: LOW >= 680, MEDIUM 580-679, HIGH < 580
+Tier default rates: LOW 5.9%, MEDIUM 25.8%, HIGH 62.9%
 ```
+
+**Model status.** The served model is the synthetic-portfolio model above. The
+optional mixed-source model (`python scripts/train_combined.py`) is
+experimental: its bank/mortgage/rating labels are proxies, not repayment
+outcomes, and most of its 0.885 hold-out AUC comes from identifying the source
+dataset (a source-only baseline scores 0.844; within-bank AUC is 0.528). Read
+[`docs/MODEL_CARD.md`](docs/MODEL_CARD.md) before using it.
 
 The scorecard maps repayment odds to 300-900:
 
@@ -172,7 +184,8 @@ The limit is the tighter of a collateral LTV cap and an income cap (debt service
 score-point unit shown on the dial.
 
 **Training and serving share one feature contract** (`ml/config.py` +
-`ml/features.py`), so online scoring cannot silently drift from the model.
+`ml/features.py`), and missing values are never imputed on one side only: XGBoost
+learns the missing-value direction from the same NaN matrix the API feeds it.
 
 ---
 
@@ -245,18 +258,21 @@ re-scores append history; every transition is audited.
 ## 8. Tests and verification
 
 ```bash
-.venv/Scripts/python -m pytest tests -q        # 126 tests
+.venv/Scripts/python -m pytest tests -q        # 136 tests
+.venv/Scripts/python scripts/check_schema_consistency.py
+.venv/Scripts/python scripts/check_portal_schema.py
 cd frontend && npm run lint && npm run build
 node scripts/verify-portal.mjs                # API :8000 + UI :3000 required
 ```
 
 Coverage includes JWT expiry/tampering, role escalation, borrower isolation,
-multipart submission, file-content validation, path traversal, the
-verification gate, SHAP response shape, re-score history, rejection and audit
-trail.
+multipart submission, file-content validation, path traversal, the verification
+gate, SHAP response shape, re-score history, rejection and audit trail, plus
+consent enforcement, per-document rejection, the decision letter and the
+external-dataset source tagging.
 
 Browser verification on this checkout: **13/13 checks passed** - banker login →
-demo file → authenticated PDF preview → verify → score **874 / LOW / ₹2,30,000**
+demo file → authenticated PDF preview → verify → score **890 / LOW / ₹2,30,000**
 with SHAP factors → sign out → borrower login → full multi-step submission →
 "Application submitted". No browser console errors.
 
@@ -277,8 +293,10 @@ This is a hackathon-grade prototype, not a live credit system:
 - **Declared data is trusted after verification.** Real Account Aggregator/UPI
   and utility feeds, reconciliation and consent artefacts are the next
   integration.
-- **No fairness testing or drift monitoring.** Segment-level bias, adverse-action
-  monitoring and a challenger model are required before production.
+- **Fairness monitoring exists, sign-off does not.** `training_metrics.json`
+  now reports default rate, AUC and pre-approval share by segment, region and age
+  band, and the model card documents the result. A production release still
+  needs disparity thresholds, adverse-action monitoring and a challenger model.
 - **The PostgreSQL DDL has not been executed against a live server in this
   build**; it is cross-checked against the ORM, not migrated. SQLite is what the
   tests run on.
@@ -300,19 +318,24 @@ backend/
   portal_db.py                   engine, sessions, demo seeding
   auth.py                        PBKDF2, JWT, RBAC dependencies
   storage.py                     simulated object storage + validation
+  report.py                      shared PDF writer + decision letter
   demo_data.py                   demo file with generated PDF proofs
   model_registry.py              model artifact + cached SHAP explainer
   service.py                     scoring orchestration
 db/
   agritrust_schema.sql           dual-portal PostgreSQL DDL
   schema.sql                     legacy single-portal schema
+scripts/
+  train_combined.py              experimental mixed-source training CLI
+  check_portal_schema.py         portal DDL ↔ ORM consistency check
 frontend/
   src/app/{page,borrower,banker,console}
   src/components/portal/         portal components
   src/lib/portal-api.ts          typed client + authenticated blob fetch
   scripts/verify-portal.mjs      headless browser end-to-end check
 docs/ARCHITECTURE.md             end-to-end technical architecture
-tests/                           pytest suite (126 tests)
+docs/MODEL_CARD.md               data, metrics, fairness and limitations
+tests/                           pytest suite (136 tests)
 artifacts/                       model, metrics, importance (generated)
 data/                            synthetic portfolio (generated)
 ```

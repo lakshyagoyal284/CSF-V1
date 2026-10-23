@@ -22,61 +22,15 @@ from backend.portal_db import DEMO_FARMER_EMAIL, DEMO_FARMER_PASSWORD
 from backend.portal_models import Application, User
 from backend.portal_schemas import ApplicationCreate
 from backend.portal_service import DocumentInput, create_application
+from backend.report import build_text_pdf
 from backend.storage import DocumentStorage
 
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# minimal PDF writer (no external dependency)
-# ---------------------------------------------------------------------------
-
-
-def _escape_pdf_text(text: str) -> str:
-    text = text.encode("ascii", "replace").decode("ascii")
-    return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-
-
+#: Backwards-compatible name used by older call sites and tests.
 def build_demo_pdf(title: str, lines: list[str]) -> bytes:
-    """Return a valid single-page PDF containing the supplied text."""
-    body = [f"BT /F2 18 Tf 56 780 Td ({_escape_pdf_text(title)}) Tj ET"]
-    y = 740
-    for line in lines:
-        body.append(f"BT /F1 11 Tf 56 {y} Td ({_escape_pdf_text(line)}) Tj ET")
-        y -= 22
-    content = "\n".join(body).encode("ascii")
-
-    objects = [
-        b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        (
-            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
-            b"/Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> "
-            b"/Contents 6 0 R >>"
-        ),
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
-        b"<< /Length " + str(len(content)).encode("ascii") + b" >>\nstream\n"
-        + content
-        + b"\nendstream",
-    ]
-
-    pdf = bytearray(b"%PDF-1.4\n")
-    offsets: list[int] = []
-    for number, obj in enumerate(objects, start=1):
-        offsets.append(len(pdf))
-        pdf += f"{number} 0 obj\n".encode("ascii") + obj + b"\nendobj\n"
-
-    xref_offset = len(pdf)
-    pdf += f"xref\n0 {len(objects) + 1}\n".encode("ascii")
-    pdf += b"0000000000 65535 f \n"
-    for offset in offsets:
-        pdf += f"{offset:010d} 00000 n \n".encode("ascii")
-    pdf += (
-        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
-        f"startxref\n{xref_offset}\n%%EOF\n"
-    ).encode("ascii")
-    return bytes(pdf)
+    return build_text_pdf(title, lines)
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +65,7 @@ _DEMO_PROFILE: dict[str, Any] = {
         "avg_bank_balance": 68_000,
         "annual_income_proxy": 300_000,
     },
+    "consent_accepted": True,
 }
 
 

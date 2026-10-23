@@ -97,7 +97,6 @@ class TrainingResult:
     """Everything the caller needs to know about a training run."""
 
     model: XGBClassifier
-    imputer: SimpleImputer
     metrics: dict[str, Any]
     data_report: dict[str, Any]
     feature_importance: pd.DataFrame
@@ -245,6 +244,59 @@ def _segment_metrics(
     return output
 
 
+def _fairness_metrics(
+    y_true: np.ndarray,
+    p_repay: np.ndarray,
+    test_frame: pd.DataFrame,
+) -> dict[str, dict[str, dict[str, float | int]]]:
+    """Outcome rates and rank-ordering by protected/segment groups.
+
+    This is a *monitoring report*, not a fairness guarantee. It exists so a
+    reviewer can see whether the model approves or ranks one group differently
+    from another before the score is ever used on a real applicant.
+    """
+
+    def age_band(value: Any) -> str:
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            return "unknown"
+        age = float(value)
+        if age < 31:
+            return "18-30"
+        if age <= 45:
+            return "31-45"
+        if age <= 60:
+            return "46-60"
+        return "60+"
+
+    dimensions: dict[str, pd.Series] = {}
+    if "applicant_category" in test_frame.columns:
+        dimensions["segment"] = test_frame["applicant_category"].astype("string").fillna("unknown")
+    if "region_tier" in test_frame.columns:
+        dimensions["region"] = test_frame["region_tier"].astype("string").fillna("unknown")
+    if "age" in test_frame.columns:
+        dimensions["age_band"] = test_frame["age"].map(age_band)
+
+    output: dict[str, dict[str, dict[str, float | int]]] = {}
+    for dimension, groups in dimensions.items():
+        report: dict[str, dict[str, float | int]] = {}
+        for group in sorted(groups.dropna().unique()):
+            mask = (groups == group).to_numpy()
+            if mask.sum() < 20 or len(set(y_true[mask])) < 2:
+                continue
+            report[str(group)] = {
+                "accounts": int(mask.sum()),
+                "default_rate": round(float(1.0 - y_true[mask].mean()), 4),
+                "roc_auc": round(float(roc_auc_score(y_true[mask], p_repay[mask])), 4),
+                # Share of files the model would place in the pre-approval tier.
+                "low_risk_share": round(
+                    float(((1.0 - p_repay[mask]) <= PD_LOW_RISK_MAX).mean()), 4
+                ),
+            }
+        if report:
+            output[dimension] = report
+    return output
+
+
 def train_model(
     portfolio: pd.DataFrame,
     *,
@@ -293,47 +345,18 @@ def train_model(
     )
 
     # --- XGBoost, trained with early stopping --------------------------------
-    # XGBoost handles missing values natively, so we do NOT impute train/val
-    # before fitting: the missing split direction is learned by the tree
-    # itself. We still impute the *test* matrix for metric computation only,
-    # and we keep an imputed copy of the full training matrix so the SHAP
-    # explainer sees the same data the model saw (with NaNs preserved).
-    #
-    # On combined real-world portfolios the engineered ratios can be undefined
-    # for many rows (e.g. no collateral and no income proxy). Those rows are
-    # still useful for learning missingness patterns, but a flat 0-fill would
-    # distort ratios like net worth and coverage. We therefore impute the raw
-    # numerics that feed ratio construction with medians fit on the training
-    # split, then build ratios from those imputed raws.
-    raw_numeric_input_columns = [
-        c for c in RAW_NUMERIC_FEATURES if c in X_train.columns
-    ]
-    imputer = SimpleImputer(strategy="median")
-    X_train_raw_imp = X_train.copy()
-    X_val_raw_imp = X_val.copy()
-    X_train_full_raw_imp = X_train_full.copy()
-    X_test_raw_imp = X_test.copy()
-    if raw_numeric_input_columns:
-        X_train_raw_imp[raw_numeric_input_columns] = imputer.fit_transform(
-            X_train[raw_numeric_input_columns]
-        )
-        X_val_raw_imp[raw_numeric_input_columns] = imputer.transform(
-            X_val[raw_numeric_input_columns]
-        )
-        X_train_full_raw_imp[raw_numeric_input_columns] = imputer.transform(
-            X_train_full[raw_numeric_input_columns]
-        )
-        X_test_raw_imp[raw_numeric_input_columns] = imputer.transform(
-            X_test[raw_numeric_input_columns]
-        )
-
+    # XGBoost handles missing values natively: the missing split direction is
+    # learned by the tree itself. Training and serving therefore both pass the
+    # raw matrix (NaNs preserved) through the same feature builder. Do NOT
+    # impute here: an imputer fitted at training time but not applied at
+    # inference silently shifts every score.
     model = XGBClassifier(
         **{**XGB_PARAMS, "early_stopping_rounds": early_stopping_patience},
     )
     model.fit(
-        X_train_raw_imp,
+        X_train,
         y_train,
-        eval_set=[(X_val_raw_imp, y_val)],
+        eval_set=[(X_val, y_val)],
         verbose=False,
     )
 
@@ -342,9 +365,9 @@ def train_model(
     # that probability; risk tiers and calibration tables need its complement,
     # the probability of default. Keeping both named explicitly avoids the
     # classic sign flip between "score" and "risk".
-    p_repay = model.predict_proba(X_test_raw_imp)[:, 1]
+    p_repay = model.predict_proba(X_test)[:, 1]
     pd_default = 1.0 - p_repay
-    y_pred_train = model.predict_proba(X_train_raw_imp)[:, 1]
+    y_pred_train = model.predict_proba(X_train)[:, 1]
     y_label = (p_repay >= 0.5).astype(int)
 
     tn, fp, fn, tp = confusion_matrix(y_test, y_label, labels=[0, 1]).ravel()
@@ -374,7 +397,7 @@ def train_model(
         },
         "validation": {
             "accounts": int(len(y_val)),
-            "roc_auc": round(float(roc_auc_score(y_val, model.predict_proba(X_val_raw_imp)[:, 1])), 4),
+            "roc_auc": round(float(roc_auc_score(y_val, model.predict_proba(X_val)[:, 1])), 4),
             "best_iteration": int(model.best_iteration),
             "epochs_trained": int(model.best_iteration),
         },
@@ -392,6 +415,20 @@ def train_model(
     metrics["overfitting_gap_auc"] = round(
         metrics["train"]["roc_auc"] - metrics["test"]["roc_auc"], 4
     )
+
+    # Fairness / segment monitoring. Reported on the hold-out split so it can
+    # be reviewed before a decision is ever made with the score.
+    test_frame = portfolio.iloc[idx_test].reset_index(drop=True)
+    metrics["fairness"] = _fairness_metrics(y_test, p_repay, test_frame)
+
+    # Provenance: if the portfolio carries a ``source`` column (the external
+    # dataset integration does), surface the mix so a reviewer can see whether
+    # the headline metric is dominated by one source.
+    if "source" in portfolio.columns:
+        metrics["data_sources"] = {
+            str(source): int(count)
+            for source, count in portfolio["source"].value_counts().items()
+        }
 
     # --- generator ceiling --------------------------------------------------
     # The synthetic target was sampled from a known latent probability. Scoring
@@ -459,16 +496,10 @@ def train_model(
 
     explainer = CreditExplainer(model, feature_columns=FEATURE_COLUMNS)
     if compute_shap_importance:
-        # SHAP needs the same imputed matrix the model actually sees.
-        # On combined portfolios many engineered ratios are undefined for some
-        # rows, so we impute the full feature matrix before explaining it.
-        full_imputer = SimpleImputer(strategy="median")
-        features_imp = pd.DataFrame(
-            full_imputer.fit_transform(features),
-            columns=list(features.columns),
-            index=features.index,
-        )
-        shap_importance = global_group_importance(explainer, features_imp, seed=seed)
+        # TreeSHAP natively understands XGBoost's missing-value handling, so the
+        # importance sample uses the same raw matrix the model sees. Imputing it
+        # here would explain a different model from the one being served.
+        shap_importance = global_group_importance(explainer, features, seed=seed)
     else:
         shap_importance = pd.DataFrame(
             columns=[
@@ -506,7 +537,6 @@ def train_model(
 
     return TrainingResult(
         model=model,
-        imputer=imputer,
         metrics=metrics,
         data_report={},
         feature_importance=importance,
@@ -543,6 +573,7 @@ def save_artifacts(
     model_path: str | Path = DEFAULT_MODEL_PATH,
     metrics_path: str | Path = DEFAULT_METRICS_PATH,
     importance_path: str | Path = DEFAULT_IMPORTANCE_PATH,
+    shap_importance_path: str | Path | None = None,
     reference_sample_size: int = 300,
 ) -> dict[str, Any]:
     """Persist the model bundle and sidecar reports.
@@ -553,10 +584,14 @@ def save_artifacts(
     model_path = Path(model_path)
     metrics_path = Path(metrics_path)
     importance_path = Path(importance_path)
-    for path in (model_path, metrics_path, importance_path):
+    # A second model must not overwrite the served model's SHAP ranking.
+    shap_path = (
+        Path(shap_importance_path)
+        if shap_importance_path is not None
+        else importance_path.with_name("shap_global_importance.csv")
+    )
+    for path in (model_path, metrics_path, importance_path, shap_path):
         path.parent.mkdir(parents=True, exist_ok=True)
-
-    imputer = result.imputer
 
     # Reference sample: lets the API expose portfolio percentiles for the UI,
     # and gives a future explainer a background distribution if needed.
@@ -599,9 +634,7 @@ def save_artifacts(
         json.dump(result.metrics, handle, indent=2)
     result.feature_importance.to_csv(importance_path, index=False)
     if not result.shap_importance.empty:
-        result.shap_importance.to_csv(
-            importance_path.with_name("shap_global_importance.csv"), index=False
-        )
+        result.shap_importance.to_csv(shap_path, index=False)
 
     return {
         "model_path": str(model_path),

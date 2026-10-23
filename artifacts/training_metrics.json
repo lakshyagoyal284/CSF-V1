@@ -2,121 +2,183 @@
   "test": {
     "accounts": 2400,
     "default_rate": 0.225,
-    "roc_auc": 0.8716,
-    "gini": 0.7433,
-    "ks": 0.5926,
-    "pr_auc": 0.953,
-    "brier_score": 0.1096,
-    "accuracy_at_0_5": 0.845,
+    "roc_auc": 0.8715,
+    "gini": 0.7429,
+    "ks": 0.5825,
+    "pr_auc": 0.9528,
+    "brier_score": 0.1097,
+    "accuracy_at_0_5": 0.8454,
     "confusion_matrix": {
       "true_positive": 1753,
-      "true_negative": 275,
-      "false_positive": 265,
+      "true_negative": 276,
+      "false_positive": 264,
       "false_negative": 107
     },
     "default_recall": 0.9425,
-    "default_precision": 0.8687
+    "default_precision": 0.8691
   },
   "train": {
     "accounts": 7800,
-    "roc_auc": 0.9114
+    "roc_auc": 0.918
   },
   "validation": {
     "accounts": 1800,
-    "roc_auc": 0.8674,
-    "best_iteration": 208,
-    "epochs_trained": 208
+    "roc_auc": 0.8673,
+    "best_iteration": 264,
+    "epochs_trained": 264
   },
   "calibration_deciles": [
     {
-      "bucket": "(0.00592, 0.0213]",
+      "bucket": "(0.0036100000000000004, 0.0187]",
       "accounts": 240,
-      "predicted_default_rate": 0.015200000256299973,
+      "predicted_default_rate": 0.012900000438094139,
       "realised_default_rate": 0.0125
     },
     {
-      "bucket": "(0.0213, 0.0331]",
+      "bucket": "(0.0187, 0.0304]",
       "accounts": 240,
-      "predicted_default_rate": 0.027400000020861626,
+      "predicted_default_rate": 0.024399999529123306,
+      "realised_default_rate": 0.0208
+    },
+    {
+      "bucket": "(0.0304, 0.0444]",
+      "accounts": 240,
+      "predicted_default_rate": 0.037300001829862595,
       "realised_default_rate": 0.0292
     },
     {
-      "bucket": "(0.0331, 0.0472]",
+      "bucket": "(0.0444, 0.0646]",
       "accounts": 240,
-      "predicted_default_rate": 0.040300000458955765,
-      "realised_default_rate": 0.025
+      "predicted_default_rate": 0.05339999869465828,
+      "realised_default_rate": 0.0667
     },
     {
-      "bucket": "(0.0472, 0.0676]",
+      "bucket": "(0.0646, 0.0949]",
       "accounts": 240,
-      "predicted_default_rate": 0.05660000070929527,
-      "realised_default_rate": 0.0542
+      "predicted_default_rate": 0.07909999787807465,
+      "realised_default_rate": 0.0917
     },
     {
-      "bucket": "(0.0676, 0.0985]",
+      "bucket": "(0.0949, 0.147]",
       "accounts": 240,
-      "predicted_default_rate": 0.08209999650716782,
-      "realised_default_rate": 0.1
-    },
-    {
-      "bucket": "(0.0985, 0.152]",
-      "accounts": 240,
-      "predicted_default_rate": 0.1234000027179718,
+      "predicted_default_rate": 0.11940000206232071,
       "realised_default_rate": 0.125
     },
     {
-      "bucket": "(0.152, 0.247]",
+      "bucket": "(0.147, 0.244]",
       "accounts": 240,
-      "predicted_default_rate": 0.19539999961853027,
-      "realised_default_rate": 0.2167
+      "predicted_default_rate": 0.19249999523162842,
+      "realised_default_rate": 0.225
     },
     {
-      "bucket": "(0.247, 0.406]",
+      "bucket": "(0.244, 0.41]",
       "accounts": 240,
-      "predicted_default_rate": 0.32249999046325684,
-      "realised_default_rate": 0.3375
+      "predicted_default_rate": 0.3246999979019165,
+      "realised_default_rate": 0.3292
     },
     {
-      "bucket": "(0.406, 0.644]",
+      "bucket": "(0.41, 0.655]",
       "accounts": 240,
-      "predicted_default_rate": 0.5163000226020813,
-      "realised_default_rate": 0.5167
+      "predicted_default_rate": 0.5268999934196472,
+      "realised_default_rate": 0.5208
     },
     {
-      "bucket": "(0.644, 0.965]",
+      "bucket": "(0.655, 0.98]",
       "accounts": 240,
-      "predicted_default_rate": 0.7768999934196472,
-      "realised_default_rate": 0.8333
+      "predicted_default_rate": 0.7871000170707703,
+      "realised_default_rate": 0.8292
     }
   ],
   "segment_breakdown": {
     "farmer": {
       "accounts": 1327,
       "default_rate": 0.1959,
-      "roc_auc": 0.8548
+      "roc_auc": 0.8546
     },
     "small_business": {
       "accounts": 1073,
       "default_rate": 0.261,
-      "roc_auc": 0.8853
+      "roc_auc": 0.885
     }
   },
   "prediction_distribution": {
-    "mean_pd_default": 0.2156,
-    "p10_pd_default": 0.0213,
-    "p90_pd_default": 0.6443,
-    "mean_probability_of_repayment": 0.7844
+    "mean_pd_default": 0.2158,
+    "p10_pd_default": 0.0187,
+    "p90_pd_default": 0.6551,
+    "mean_probability_of_repayment": 0.7842
   },
-  "overfitting_gap_auc": 0.0398,
+  "overfitting_gap_auc": 0.0465,
+  "fairness": {
+    "segment": {
+      "farmer": {
+        "accounts": 1327,
+        "default_rate": 0.1959,
+        "roc_auc": 0.8546,
+        "low_risk_share": 0.6255
+      },
+      "small_business": {
+        "accounts": 1073,
+        "default_rate": 0.261,
+        "roc_auc": 0.885,
+        "low_risk_share": 0.5769
+      }
+    },
+    "region": {
+      "rural": {
+        "accounts": 1033,
+        "default_rate": 0.274,
+        "roc_auc": 0.8704,
+        "low_risk_share": 0.5353
+      },
+      "semi_urban": {
+        "accounts": 847,
+        "default_rate": 0.1889,
+        "roc_auc": 0.8621,
+        "low_risk_share": 0.6612
+      },
+      "urban": {
+        "accounts": 520,
+        "default_rate": 0.1865,
+        "roc_auc": 0.8765,
+        "low_risk_share": 0.6462
+      }
+    },
+    "age_band": {
+      "18-30": {
+        "accounts": 383,
+        "default_rate": 0.248,
+        "roc_auc": 0.8586,
+        "low_risk_share": 0.5692
+      },
+      "31-45": {
+        "accounts": 1169,
+        "default_rate": 0.207,
+        "roc_auc": 0.8687,
+        "low_risk_share": 0.6056
+      },
+      "46-60": {
+        "accounts": 737,
+        "default_rate": 0.2361,
+        "roc_auc": 0.8815,
+        "low_risk_share": 0.6242
+      },
+      "60+": {
+        "accounts": 111,
+        "default_rate": 0.2613,
+        "roc_auc": 0.8844,
+        "low_risk_share": 0.5676
+      }
+    }
+  },
   "generator_ceiling": {
     "latent_roc_auc": 0.8983,
-    "auc_captured_pct": 93.31
+    "auc_captured_pct": 93.27
   },
   "scorecard": {
     "score_min_observed": 300,
     "score_max_observed": 900,
-    "score_mean": 693.3,
-    "score_median": 723,
+    "score_mean": 696.1,
+    "score_median": 726,
     "tier_thresholds": {
       "low_max_pd": 0.15,
       "medium_max_pd": 0.35,
@@ -124,79 +186,79 @@
       "score_medium_min": 580
     },
     "tier_counts": {
-      "LOW": 1433,
-      "HIGH": 553,
-      "MEDIUM": 414
+      "LOW": 1449,
+      "HIGH": 563,
+      "MEDIUM": 388
     },
     "tier_rate_by_tier": {
-      "LOW": 0.0579,
-      "MEDIUM": 0.2488,
-      "HIGH": 0.6401
+      "LOW": 0.0594,
+      "MEDIUM": 0.2577,
+      "HIGH": 0.6288
     }
   },
   "top_drivers_by_shap": [
     {
       "feature": "proposed_debt_service_ratio",
       "label": "Proposed Debt Service",
-      "mean_abs_log_odds": 0.6459,
-      "mean_signed_log_odds": 0.1784,
-      "mean_abs_score_points": 57.9,
+      "mean_abs_log_odds": 0.6618,
+      "mean_signed_log_odds": 0.1865,
+      "mean_abs_score_points": 59.3,
       "direction": "mostly reduces risk"
     },
     {
       "feature": "debt_to_asset_ratio",
       "label": "Debt-to-Asset Ratio",
-      "mean_abs_log_odds": 0.5014,
-      "mean_signed_log_odds": 0.1408,
-      "mean_abs_score_points": 44.9,
+      "mean_abs_log_odds": 0.5054,
+      "mean_signed_log_odds": 0.1405,
+      "mean_abs_score_points": 45.3,
       "direction": "mostly reduces risk"
     },
     {
       "feature": "income_to_debt_ratio",
       "label": "Income-to-Debt Ratio",
-      "mean_abs_log_odds": 0.266,
-      "mean_signed_log_odds": 0.087,
-      "mean_abs_score_points": 23.8,
+      "mean_abs_log_odds": 0.2747,
+      "mean_signed_log_odds": 0.0969,
+      "mean_abs_score_points": 24.6,
       "direction": "mostly reduces risk"
     },
     {
       "feature": "debt_service_ratio",
       "label": "Debt Service Ratio",
-      "mean_abs_log_odds": 0.2621,
-      "mean_signed_log_odds": 0.0899,
-      "mean_abs_score_points": 23.5,
+      "mean_abs_log_odds": 0.2614,
+      "mean_signed_log_odds": 0.0889,
+      "mean_abs_score_points": 23.4,
       "direction": "mostly reduces risk"
     },
     {
       "feature": "collateral_coverage_ratio",
       "label": "Collateral Coverage",
-      "mean_abs_log_odds": 0.1841,
-      "mean_signed_log_odds": 0.0399,
-      "mean_abs_score_points": 16.5,
+      "mean_abs_log_odds": 0.1889,
+      "mean_signed_log_odds": 0.0415,
+      "mean_abs_score_points": 16.9,
       "direction": "mostly reduces risk"
     },
     {
       "feature": "financial_discipline_score",
       "label": "Financial Discipline",
-      "mean_abs_log_odds": 0.1441,
-      "mean_signed_log_odds": 0.0144,
-      "mean_abs_score_points": 12.9,
+      "mean_abs_log_odds": 0.1585,
+      "mean_signed_log_odds": 0.0148,
+      "mean_abs_score_points": 14.2,
       "direction": "mixed"
     },
     {
       "feature": "utility_payment_consistency_score",
       "label": "Utility Payment Consistency",
-      "mean_abs_log_odds": 0.1391,
-      "mean_signed_log_odds": 0.0128,
-      "mean_abs_score_points": 12.4,
+      "mean_abs_log_odds": 0.1507,
+      "mean_signed_log_odds": 0.0145,
+      "mean_abs_score_points": 13.5,
       "direction": "mixed"
     },
     {
       "feature": "dependents",
       "label": "Household Dependents",
-      "mean_abs_log_odds": 0.1379,
-      "mean_signed_log_odds": 0.0076,
-      "mean_abs_score_points": 12.4,
+      "mean_abs_log_odds": 0.1504,
+      "mean_signed_log_odds": 0.0089,
+      "mean_abs_score_points": 13.5,
       "direction": "mixed"
     }
   ],

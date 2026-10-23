@@ -302,6 +302,8 @@ class CreditScoreResult(Base):
         String(36), ForeignKey("users.id", ondelete="SET NULL")
     )
     officer_notes: Mapped[str | None] = mapped_column(Text)
+    decline_option: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    decline_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     application: Mapped[Application] = relationship(back_populates="scores")
 

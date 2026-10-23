@@ -1,4 +1,4 @@
-# --- Python ---------------------------------------------------------------
+# --- Python -----------------------------------------------------------------
 __pycache__/
 *.py[cod]
 .venv/
@@ -7,48 +7,42 @@ venv/
 .mypy_cache/
 .ruff_cache/
 
-# --- Environment / secrets -------------------------------------------------
+# --- Environment / secrets ---------------------------------------------------
 .env
 .env.local
 !.env.example
 
-# --- Local database --------------------------------------------------------
+# --- Local databases ---------------------------------------------------------
 *.sqlite3
 *.db
 
-# --- Node / Next.js (frontend has its own .gitignore too) ------------------
+# --- Node / Next.js ----------------------------------------------------------
 node_modules/
 .next/
 out/
 npm-debug.log*
 *.tsbuildinfo
 
-# --- OS / editor -----------------------------------------------------------
+# --- OS / editor -------------------------------------------------------------
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
 
-# ---------------------------------------------------------------------------
-# Generated ML artifacts and data are intentionally NOT ignored: a fresh clone
-# can run the API and the dashboard immediately. Re-create them any time with
-#   python train_model.py --refresh-data
-# ---------------------------------------------------------------------------
-
-# --- Uploaded proofs (simulated object storage) -----------------------------
-data/uploads/
-
-# --- Local end-to-end test artifacts ---------------------------------------
-.e2e/
-node_modules/
-.next/
-*.db
-*.sqlite3
-data/uploads/
-.e2e/
-.venv/
-venv/
-*.pkl
+# --- Generated model artifacts ----------------------------------------------
+# Recreate the served model with:  python train_model.py
 artifacts/*.pkl
-data/raw/*.csv
-data/raw/
+artifacts/**/*.pkl
+
+# --- Raw and derived datasets ------------------------------------------------
+# The lender files are licence-bound and are not committed; the unified frame is
+# derived from them. See data/raw/README.md and docs/MODEL_CARD.md.
+data/processed/*.csv
+data/raw/*
+!data/raw/README.md
+
+# --- Uploaded proofs (simulated object storage) ------------------------------
+data/uploads/
+
+# --- Local end-to-end artifacts ----------------------------------------------
+.e2e/

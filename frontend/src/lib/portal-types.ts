@@ -188,6 +188,7 @@ export interface AuditEntry {
 /** Everything the borrower declares, in the form's own vocabulary. */
 export interface ApplicationPayload {
   applicant_name: string;
+  consent_accepted: boolean;
   phone?: string | null;
   applicant_category: ApplicantCategory;
   region_tier: RegionTier;
@@ -230,4 +231,6 @@ export interface VerifyAndScorePayload {
   document_ids?: string[];
   verify_all?: boolean;
   officer_notes?: string | null;
+  decline_option?: string | null;
+  decline_reason?: string | null;
 }

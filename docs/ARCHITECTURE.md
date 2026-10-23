@@ -173,7 +173,7 @@ All routes are under `/api`. Except for register/login, every route requires
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/borrower/application` | Multipart: `payload` JSON + files + `doc_types` |
+| POST | `/borrower/application` | Multipart: `payload` JSON (must include `consent_accepted: true`) + files + `doc_types` |
 | GET | `/borrower/applications` | Own applications; never includes a score |
 | GET | `/borrower/applications/{id}` | Own application status |
 | POST | `/borrower/applications/{id}/documents` | Add proofs while pending |
@@ -187,6 +187,9 @@ All routes are under `/api`. Except for register/login, every route requires
 | POST | `/banker/applications/{id}/verify` | Mark fields/proofs verified |
 | POST | `/banker/verify-and-score/{id}` | Verify + XGBoost + SHAP + persist |
 | GET | `/banker/applications/{id}/score` | Latest persisted result |
+| GET | `/banker/applications/{id}/history` | Append-only decision history |
+| GET | `/banker/applications/{id}/decision-letter` | PDF decision letter (score, band, top reasons) |
+| POST | `/banker/applications/{id}/documents/{doc_id}/reject` | Reject one proof with a reason |
 | POST | `/banker/applications/{id}/reject` | Reject with a required reason |
 | GET | `/banker/applications/{id}/audit` | Workflow trail |
 | POST | `/banker/demo-applications` | Demo file with generated PDF proofs |
@@ -197,6 +200,14 @@ All routes are under `/api`. Except for register/login, every route requires
 borrower can only read proofs on their own applications. Ownership failures
 return 404 to avoid confirming that another applicant's file exists.
 
+### Consent and decision artefacts
+
+Submission requires `consent_accepted: true`; the API appends a
+`borrower_consent` entry (timestamp, declaration version) to the audit log, so
+the bank has a persisted consent record rather than a client-side checkbox. Once
+scored, the banker can download a PDF decision letter and inspect the full score
+history (re-scores append rows; nothing is overwritten).
+
 ### Example: submit an application
 
 ```bash
@@ -204,6 +215,7 @@ curl -X POST localhost:8000/api/borrower/application \
   -H "Authorization: Bearer $BORROWER_TOKEN" \
   -F 'payload={
         "applicant_name":"Asha Kumari",
+        "consent_accepted":true,
         "applicant_category":"farmer",
         "region_tier":"rural",
         "requested_loan_amount":300000,
@@ -234,7 +246,7 @@ Response (abridged):
 
 ```json
 {
-  "credit_score": 874,
+  "credit_score": 890,
   "risk_tier": "LOW",
   "tier_label": "Pre-Approved",
   "decision": "PRE_APPROVED",
@@ -381,8 +393,9 @@ For PostgreSQL, apply `db/agritrust_schema.sql`, then point
 ## 8. Testing and verification
 
 ```bash
-# backend: 126 tests, including 36 portal-specific tests
+# backend: 136 tests, including 40 portal-specific tests
 .venv/Scripts/python -m pytest tests -q
+.venv/Scripts/python scripts/check_portal_schema.py
 
 # frontend
 cd frontend
@@ -410,7 +423,7 @@ Portal test coverage:
 - demo file with previewable PDFs
 
 Browser verification (this checkout): 13/13 checks passed, including bank
-login → demo file → PDF preview → verify → gauge 874/LOW/₹2,30,000 → borrower
+login → demo file → PDF preview → verify → gauge 890/LOW/₹2,30,000 → borrower
 login → multi-step submission → "Application submitted". No browser console
 errors.
 

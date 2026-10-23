@@ -176,6 +176,15 @@ export const portalApi = {
   latestScore: (token: string, id: string) =>
     request<ScoreResult>(`/api/banker/applications/${id}/score`, authHeaders(token)),
 
+  scoreHistory: (token: string, id: string) =>
+    request<ScoreResult[]>(`/api/banker/applications/${id}/history`, authHeaders(token)),
+
+  rejectDocument: (token: string, id: string, documentId: string, reason: string) =>
+    request<BankerApplicationDetail>(
+      `/api/banker/applications/${id}/documents/${documentId}/reject`,
+      { token, method: "POST", json: { reason } },
+    ),
+
   reject: (token: string, id: string, reason: string) =>
     request<BankerApplicationDetail>(`/api/banker/applications/${id}/reject`, {
       token,
@@ -191,6 +200,26 @@ export const portalApi = {
       token,
       method: "POST",
     }),
+
+  /**
+   * Fetch the decision letter as a blob URL. The caller triggers the download
+   * and revokes the URL afterwards (a plain link cannot send the bearer token).
+   */
+  decisionLetter: async (token: string, id: string): Promise<string> => {
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE}/api/banker/applications/${id}/decision-letter`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+    } catch {
+      throw new PortalApiError(`Cannot reach the document store at ${API_BASE}.`, 0);
+    }
+    if (!response.ok) {
+      throw new PortalApiError("The decision letter could not be generated.", response.status);
+    }
+    return URL.createObjectURL(await response.blob());
+  },
 
   /**
    * Fetch document bytes with the bearer token.
