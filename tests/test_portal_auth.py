@@ -37,8 +37,7 @@ def register_borrower(client) -> tuple[str, dict[str, str]]:
         },
     )
     assert response.status_code == 201, response.text
-    payload = response.json()
-    return payload["user"]["id"], bearer(payload["access_token"])
+    return response.json()["user"]["id"], bearer(response.json()["access_token"])
 
 
 @pytest.fixture(scope="module")
@@ -105,6 +104,8 @@ def test_borrower_self_registration_returns_borrower_role(client):
     me = client.get("/api/auth/me", headers=headers).json()
     assert me["id"] == user_id
     assert me["role"] == "borrower"
+
+
 
 
 def test_registration_cannot_escalate_to_banker(client):
@@ -180,9 +181,8 @@ def test_unauthenticated_requests_are_refused(client):
     assert client.get("/api/banker/applications").status_code == 401
 
 
-def test_legacy_scoring_routes_are_banker_only(client):
+def test_legacy_scoring_routes_are_banker_only(client, application):
     """The original /api/score route is a model-execution surface too."""
-    application = base_application()
 
     assert client.raw.post("/api/score", json=application).status_code == 401
 

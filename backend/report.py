@@ -1,365 +1,558 @@
-"""Minimal PDF writers used by the demo file and the banker decision letter.
+"""Minimal single-page PDF writer for the AgriTrust decision letter.
 
-No external PDF dependency is required: the documents are single-page PDFs that
-browsers and standard viewers open. The decision letter now uses a small set of
-positioned text/fragment objects, a filled header band, a ruleset and a footer
-stamp so the borrow-facing letter reads as a real credit document rather than a
-plain text dump.
+Produces a valid A4 PDF (595 x 842 pt) with:
+
+- header band
+- applicant block
+- loan summary
+- score + risk tier block
+- decision block with recommended limit and reason
+- risk indicators
+- SHAP factor list
+- banker signature block
+- footer
+
+The content stream uses only PDF operators that every mainstream viewer accepts:
+
+- Text is drawn inside a ``BT ... ET`` block, positioned with ``Tm`` and drawn
+  with ``(text) Tj``.
+- Rectangles are added to the current path with ``re`` then filled/stroked with
+  ``f`` / ``S``.
+- Colours use device RGB: ``RG`` for stroke and ``rg`` for fill.
+- Fonts are ``F1`` (Helvetica) and ``F2`` (Helvetica-Bold).
+
+The file is intentionally ASCII-only so it can be returned directly from
+FastAPI as ``application/pdf`` without external dependencies.
 """
-
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
+from backend.portal_models import Application, CreditScoreResult
 
-def _issuer_block(bank_name: str, banker_name: str, banker_email: str, generated_at: str, box_top: int) -> list[str]:
-    """Return a boxed block stating the decision bank and the banker who signed it."""
-    box_left, box_right, box_width = 54, 541, 487
-    box_left_edge = box_left
-    box_top_local = box_top - 2
-    box_bottom = box_top - 58
-    block: list[str] = []
-    block.append(f"{box_left_edge} {box_bottom} {box_width} {box_top_local - box_bottom} {_rect(box_left_edge, box_bottom, box_width, box_top_local - box_bottom, "0.92 RG")}")
-    block.append(f"{box_left} {box_top_local} m {box_right} {box_top_local} {_line_rule(box_right, box_top_local, box_left, box_top_local, "0 0 0 RG")}")
-    block.append(_line("Decision issued by", box_left + 10, box_top_local - 16, "F1", 8.5, "0.5 G"))
-    block.append(_line(bank_name, box_left + 10, box_top_local - 28, "F2", 12, "0 0 0 RG"))
-    block.append(_line("Reviewed and verified by", box_left + 10, box_top_local - 44, "F1", 8.5, "0.5 G"))
-    block.append(_line(banker_name, box_left + 210, box_top_local - 44, "F2", 11, "0 0 0 RG"))
-    if banker_email:
-        block.append(_line(f"Signature · {banker_email}", box_left + 10, box_top_local - 52, "F1", 7.5, "0.55 G"))
-    else:
-        block.append(_line("Signature · credit underwriting team", box_left + 10, box_top_local - 52, "F1", 7.5, "0.55 G"))
-    block.append(_line(f"Date of decision: {generated_at}", box_left + 10, box_top_local - 52, "F1", 7.5, "0.55 G"))
-    return block
+# ---------------------------------------------------------------------------
+# Vocabulary helpers
+# ---------------------------------------------------------------------------
 
 
-def _escape_pdf_text(text: str) -> str:
-    text = str(text).encode("ascii", "replace").decode("ascii")
-    return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+def _applicant_category_label(value: str) -> str:
+    return {
+        "farmer": "Farmer",
+        "small_business": "Small business",
+        "self_employed": "Self-employed",
+        "not_applicable": "Applicant",
+    }.get(value, value)
 
 
-def _inr(value: float | None) -> str:
-    if value is None:
-        return "not on file"
-    return f"INR {float(value):,.0f}"
+def _region_tier_label(value: str) -> str:
+    return {
+        "rural": "Rural",
+        "semiurban": "Semi-urban",
+        "urban": "Urban",
+    }.get(value, value)
 
 
-def _line(text: str, x: int, y: int, font: str, size: int, colour: str | None = None) -> str:
-    operator = f"/{font} {size} Tf"
-    if colour:
-        operator = f"{colour} {operator}"
-    return f"BT {operator} {x} {y} Td ({_escape_pdf_text(text)}) Tj ET"
+def _tier_label(value: str | None) -> str:
+    return {
+        "VERY_LOW": "Very Low",
+        "LOW": "Low",
+        "MEDIUM": "Medium",
+        "HIGH": "High",
+        "VERY_HIGH": "Very High",
+    }.get(value or "", "N/A")
 
 
-def _rect(x: int, y: int, w: int, h: int, fill: str) -> str:
-    return f"{fill} re B"
+def _decision_label(value: str | None) -> str:
+    if not value:
+        return "Pending review"
+    return {
+        "approved": "Loan Approved",
+        "manual_review": "Manual Review",
+        "declined": "Declined",
+    }.get(value, "Pending review")
 
 
-def _line_rule(x1: int, y1: int, x2: int, y2: int, colour: str = "0.7 G") -> str:
-    return f"{x2} {y2} m {x1} {y1} l S"
+# ---------------------------------------------------------------------------
+# Content-stream helpers
+# ---------------------------------------------------------------------------
 
 
-def build_text_pdf(title: str, lines: list[str]) -> bytes:
-    """Return a valid single-page PDF containing the supplied text.
+def _rect(x: int, y: int, w: int, h: int, fill: str, stroke: str = "") -> str:
+    """Rectangle path with optional fill and stroke.
 
-    Kept for the demo proofs so they render identically to the original writer.
-    The decision letter now uses :func:`build_decision_letter` instead.
+    ``fill`` should be a fill colour like "0.975 rg", ``stroke`` a stroke
+    colour like "0.5 0.5 0.5 RG". Either may be empty.
     """
-    body = [_line(title, 56, 780, "F2", 18)]
-    y = 740
-    for line in lines:
-        body.append(_line(line, 56, y, "F1", 11))
-        y -= 22
-    content = "\n".join(body).encode("ascii")
-
-    objects = [
-        b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        (
-            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
-            b"/Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> "
-            b"/Contents 6 0 R >>"
-        ),
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
-        b"<< /Length " + str(len(content)).encode("ascii") + b" >>\nstream\n"
-        + content
-        + b"\nendstream",
-    ]
-
-    pdf = bytearray(b"%PDF-1.4\n")
-    offsets: list[int] = []
-    for number, obj in enumerate(objects, start=1):
-        offsets.append(len(pdf))
-        pdf += f"{number} 0 obj\n".encode("ascii") + obj + b"\nendobj\n"
-
-    xref_offset = len(pdf)
-    pdf += f"xref\n0 {len(objects) + 1}\n".encode("ascii")
-    pdf += b"0000000000 65535 f \n"
-    for offset in offsets:
-        pdf += f"{offset:010d} 00000 n \n".encode("ascii")
-    pdf += (
-        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
-        f"startxref\n{xref_offset}\n%%EOF\n"
-    ).encode("ascii")
-    return bytes(pdf)
+    operators = "re"
+    if fill:
+        operators += f" {fill} f"
+    if stroke:
+        operators += f" {stroke} S"
+    return f"{x} {y} {w} {h} {operators}\n"
 
 
+def _text_line(text: str, x: int, y: int, font: str, size: int, colour: str) -> str:
+    """One line of text. ``font`` is the PDF font resource name, e.g. "F1"."""
+    escaped = _escape_pdf_string(text)
+    return (
+        "BT\n"
+        f"/{font} {size} Tf\n"
+        f"{colour}\n"
+        f"{x} {y} Tm\n"
+        f"({escaped}) Tj\n"
+        "ET\n"
+    )
 
-def _applicant_line2(application: Any) -> str:
-    """Optional second line under the applicant name, e.g. contact or category."""
-    candidate = str(getattr(application, "applicant_email", "")).strip()
-    if candidate:
-        return candidate
-    candidate = str(getattr(application, "applicant_category", "")).replace("_", " ").title()
-    if candidate:
-        return candidate + " applicant"
-    return ""
+
+def _escape_pdf_stream(text: str) -> str:
+    """Escape ``text`` for use inside a PDF content stream.
+
+    Only escapes characters that are special inside the content stream
+    ``(string) Tj/Sj`` operators: backslash, left paren, right paren, and
+    newlines. Everything else stays literal so the INR rupee sign stays
+    visible.
+    """
+    bits: list[str] = []
+    for ch in text:
+        if ch == "\\":
+            bits.append("\\\\")
+        elif ch == "(":
+            bits.append("\\(")
+        elif ch == ")":
+            bits.append("\\)")
+        elif ch == "\n":
+            bits.append("\\n")
+        else:
+            bits.append(ch)
+    return "".join(bits)
 
 
-def _issuer_block(
-    bank_name: str,
-    banker_name: str,
-    banker_email: str,
-    generated_at: str,
-    *,
-    box_x: int = 54,
-    box_right: int = 541,
-    box_top: int = 600,
-    font: str = "F1",
-    label_font: str = "F2",
-    line_size: int = 8.5,
-    title_size: int = 8.5,
-    title_colour: str = "0.08 G",
-    body_colour: str = "0 0 0 RG",
-    label_colour: str = "0.5 G",
-    border_colour: str = "0 0 0 RG",
-) -> list[str]:
-    """A bordered block stating who issued the decision."""
+def _escape_pdf_string(text: str) -> str:
+    """Return ``text`` escaped for use as a PDF literal string.
+
+    PDF literal strings support both octal escapes and the ``\\uXXXX``/``\\UXXXXXXXX``
+    unicode escape forms, so the INR rupee sign renders as a readable ``\\u20b9`` in the
+    file while still being a valid PDF literal-string escape.
+    """
+    bits: list[str] = []
+    for ch in text:
+        code = ord(ch)
+        if ch == "\\":
+            bits.append("\\\\")
+        elif ch == "(":
+            bits.append("\\(")
+        elif ch == ")":
+            bits.append("\\)")
+        elif ch == "\n":
+            bits.append("\\n")
+        elif 32 <= code <= 126:
+            bits.append(ch)
+        elif code <= 0xFFFF:
+            bits.append(f"\\u{code:04X}")
+        else:
+            bits.append(f"\\U{code:08X}")
+    return "".join(bits)
+
+
+def _inr(value: float) -> str:
+    """Simple comma-separated INR formatting for the demo letter.
+
+    Returns the UTF-8 rupee sign followed by the formatted amount, e.g. ``\u20b9500000``.
+    The caller (``_text_line``) escapes the result for the PDF content stream, which
+    turns the UTF-8 rupee sign into a valid ``\u20b9`` literal-string escape.
+    """
+    formatted = f"{value:,.0f}".replace(",", "")
+    return f"\u20b9{formatted}"
+
+
+def _shap_lines(shap: dict[str, Any] | None) -> list[str]:
+    """Turn the SHAP payload into a list of PDF text lines."""
+    if not shap:
+        return []
     lines: list[str] = []
-    inner_top = box_top - 6
-    lines.append(_line("Decision issued by", box_x + 6, inner_top, label_font, title_size, title_colour))
-    inner_top -= 12
-    lines.append(_line(bank_name, box_x + 6, inner_top, font, line_size, body_colour))
-    inner_top -= 13
-    lines.append(_line("Banker officer", box_x + 6, inner_top, label_font, line_size - 0.5, label_colour))
-    inner_top -= 12
-    lines.append(_line(banker_name, box_x + 6, inner_top, font, line_size, body_colour))
-    inner_top -= 12
-    if banker_email:
-        for i, segment in enumerate([banker_email] + ([] if len(banker_email) <= 58 else [])):
-            if i == 0:
-                lines.append(_line(banker_email, box_x + 6, inner_top, font, line_size - 1, body_colour))
-                inner_top -= 11
-                break
-            lines.append(_line(segment, box_x + 6, inner_top, font, line_size - 1, body_colour))
-            inner_top -= 11
-    inner_top -= 4
-    lines.append(_line(f"Issued under {bank_name} credit assessment policy", box_x + 6, inner_top, font, line_size - 1, "0.45 G"))
-    lines.append(_rect(box_x, box_top - 58, box_right - box_x, 58, border_colour.replace(" RG", " RG")))
+    for factor in shap.get("top_factors", []) or []:
+        label = _shap_label(factor.get("label") or "")
+        impact = factor.get("score_impact_points", 0)
+        sign = "+" if impact >= 0 else ""
+        value = str(factor.get("value") or "")
+        lines.append(f"{label}: {sign}{impact} pts · {value}")
     return lines
 
 
+def _shap_label(label: str) -> str:
+    """Human-friendly label for a feature key."""
+    mapping = {
+        "debt_to_income": "Debt to income",
+        "coverage_ratio": "Coverage ratio",
+        "default_history": "Default history",
+        "income_proxy": "Income proxy",
+        "collateral_liquidity": "Collateral liquidity",
+        "cashflow_consistency": "Cash-flow consistency",
+    }
+    return mapping.get(label, label.replace("_", " "))
+
+
+# ---------------------------------------------------------------------------
+# Main builder
+# ---------------------------------------------------------------------------
+
+
 def build_decision_letter(
-    application: Any,
-    result: Any,
+    application: Application,
+    latest: CreditScoreResult,
     *,
-    bank_name: str | None = None,
-    banker_name: str | None = None,
-    banker_email: str | None = None,
-    issued_at: str | None = None,
+    bank_name: str = "AgriTrust AI",
+    banker_name: str = "",
+    banker_email: str = "",
+    issued_at: str = "",
 ) -> bytes:
-    """Render a borrower-facing credit decision letter as a single-page PDF.
+    """Return the decision letter as a single-page A4 PDF.
 
-    The layout is, top to bottom:
-
-    * a letterhead band for the issuing bank,
-    * a boxed applicant-name header,
-    * a "decision issued by" bank / banker block,
-    * an applicant summary grid,
-    * a credit decision scorecard,
-    * the principal score factors,
-    * a closing authority line and disclaimer.
-
-    It is deliberately single-page so the document is easy to print and file.
-
-    The text fragments are escaped for PDF content streams, so a literal '(' or
-    ')' in application data is rendered as backslash-escaped \\( / \\) in the stream.
-    That is why assertions against the raw PDF bytes should use the visible text
-    form (for example "Pre Approved") rather than the unescaped model value.
+    The returned bytes are ASCII and can be served directly as
+    ``application/pdf``. The document stays small and avoids external fonts or
+    images by design.
     """
-    explainability = result.shap_explanations_json or {}
-    top_factors = explainability.get("top_factors") or []
-
-    bank_name = str(bank_name or getattr(application, "bank_name", None) or "").strip() or "AgriTrust AI"
-    banker_name = str(banker_name or getattr(result, "banker_name", None) or "").strip() or "Credit Underwriting Team"
-    banker_email = str(banker_email or getattr(result, "banker_email", None) or "").strip() or "credit.underwriting@agritrust.ai"
-
-    file_no = str(getattr(application, "id", "")).replace("-", "")[:10] or "0000000000"
-    generated_at = (issued_at or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")).strip() or "issued today"
-    app_id = str(getattr(application, "id", "")).replace("-", "")[:10] or "N/A"
-    applicant = str(getattr(application, "applicant_name", "")).strip() or "Applicant"
-    applicant_line2 = _applicant_line2(application) or (str(getattr(application, "applicant_category", "")).replace("_", " ").title() + " applicant")
-    applicant_line2 = applicant_line2.strip() or ""
-    segment = str(getattr(application, "applicant_category", "")).replace("_", " ").title()
-    region = str(getattr(application, "region_tier", "")).replace("_", " ").title()
-    requested = _inr(getattr(application, "requested_loan_amount", None))
-    tenure = int(getattr(application, "loan_tenure_months", 0) or 0)
-
-    score = int(getattr(result, "credit_score", 0) or 0)
-    tier = str(getattr(result, "risk_tier", "")).replace("_", " ").title()
-    decision_label = str(getattr(result, "decision", "")).replace("_", " ").title()
-    pod = float(getattr(result, "probability_of_default", 0) or 0)
-    limit = _inr(getattr(result, "recommended_limit", None))
-    model_version = str(getattr(result, "model_version", "")).strip() or "unversioned"
-    recorded_at = str(getattr(result, "generated_at", "")).strip() or "not recorded"
-    decline_option = str((getattr(result, "decline_option", None) or "")).strip() or "not offered"
-    decline_option_label = decline_option.replace("_", " ").title() or "Decline not offered"
-    decline_reason = str((getattr(result, "decline_reason", None) or "")).strip() or ""
-    decline_reason_short = (decline_reason[:120] + "…") if len(decline_reason) > 120 else decline_reason
-
-    factors: list[tuple[int, str, str | None]] = []
-    for factor in top_factors[:5]:
-        points = int(factor.get("score_impact_points", 0))
-        sign = "+" if points >= 0 else ""
-        label = factor.get("label") or factor.get("feature") or "factor"
-        label = str(label).replace("_", " ").title()
-        value = factor.get("value")
-        suffix = f"  (declared: {value})" if value not in (None, "", "None") else ""
-        factors.append((points, label, suffix))
-
     page: list[str] = []
 
-    # Background
-    page.append(_rect(0, 0, 595, 842, "0.975 RG"))
-    page.append("0.05 G")
+    # Catalog (1) and pages (2)
+    page.append("%PDF-1.4\n")
+    page.append(
+        "1 0 obj\n"
+        "<< /Type /Catalog /Pages 2 0 R >>\n"
+        "endobj\n"
+        "2 0 obj\n"
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>\n"
+        "endobj\n"
+    )
 
-    # Letterhead band — bank identity at the very top
-    page.append(f"{10} {792} {575} {58} {_rect(10, 792, 575, 58, "1 1 1 RG")}")
-    page.append(f"{54} {828} m {575} {828} {_line_rule(575, 828, 54, 828, "0 0 0 RG")}")
-    page.append(_line(bank_name, 54, 820, "F2", 22, "0.06 G"))
-    page.append(_line("Alternative Credit Decision Letter", 54, 804, "F1", 9, "0.4 G"))
-    page.append(_line("Borrower copy · confidential", 54, 794, "F1", 7.5, "0.5 G"))
+    # Content stream (built as text until we know the exact byte length)
+    stream: list[str] = []
 
-    # Reference / page stamp on the right of the band
-    page.append(_line(f"File No.  {file_no}", 430, 814, "F2", 9, "0 0 0 RG"))
-    page.append(_line(f"Issued:  {generated_at}", 430, 802, "F1", 8, "0.25 G"))
+    # Background and border
+    stream.append(_rect(0, 0, 595, 842, "0.985 rg", "0.5 0.5 0.5 RG"))
 
-    # Rule under letterhead
-    page.append(_line_rule(54, 782, 541, 782, "0.13 G"))
+    # Header band
+    stream.append(_rect(0, 760, 595, 82, "0.16 RG", "0.4 0.4 0.4 RG"))
+    stream.append(_text_line(bank_name, 260, 803, "F2", 24, "1 1 1 RG"))
+    stream.append(_text_line("Credit Underwriting Team", 260, 779, "F1", 12, "0.85 0.85 0.85 RG"))
 
-    # Applicant name box — top of the body, clearly boxed
-    name_box_top = 762
-    name_box_bottom = 722
-    name_box_left = 54
-    name_box_right = 541
-    page.append(_rect(name_box_left, name_box_bottom, name_box_right - name_box_left, name_box_top - name_box_bottom, "0 0 0 RG"))
-    page.append(_line_rule(name_box_left, name_box_top - 1, name_box_right, name_box_top - 1, "0 0 0 RG"))
-    name_line1 = applicant if len(applicant) <= 34 else applicant[:34]
-    name_line2 = ""
-    if applicant_line2:
-        name_line2 = applicant_line2
-    page.append(_line(name_line1, name_box_left + 8, name_box_top - 16, "F2", 13, "0 0 0 RG"))
-    if name_line2:
-        page.append(_line(name_line2, name_box_left + 8, name_box_top - 31, "F1", 9.5, "0.6 G"))
+    # Applicant block
+    stream.append(_rect(20, 690, 555, 62, "0.975 rg", "0.5 0.5 0.5 RG"))
+    stream.append(_text_line("Applicant", 30, 742, "F2", 10, "0.42 0.42 0.42 RG"))
+    stream.append(_text_line(application.applicant_name, 30, 727, "F2", 18, "0.12 0.12 0.12 RG"))
+    stream.append(
+        _text_line(
+            f"{_applicant_category_label(application.applicant_category)} "
+            f"· {_region_tier_label(application.region_tier)}",
+            30,
+            706,
+            "F1",
+            12,
+            "0.35 0.35 0.35 RG",
+        )
+    )
 
-    issuer_block = _issuer_block(bank_name, banker_name, banker_email, generated_at, box_top=name_box_bottom - 6)
-    page.extend(issuer_block)
-    issuer_bottom = name_box_bottom - 6 - 58
+    # Loan summary
+    stream.append(_text_line("Loan request", 30, 666, "F2", 10, "0.42 0.42 0.42 RG"))
+    stream.append(
+        _text_line(
+            f"Requested: {_inr(application.requested_loan_amount)} "
+            f"· Tenure: {application.loan_tenure_months} months",
+            210,
+            666,
+            "F1",
+            11,
+            "0.34 0.34 0.34 RG",
+        )
+    )
+    stream.append(
+        _text_line(
+            f"Outstanding debt: {_inr(application.outstanding_debt)} "
+            f"· Existing EMI: {_inr(application.monthly_emi_obligation)}",
+            210,
+            650,
+            "F1",
+            11,
+            "0.34 0.34 0.34 RG",
+        )
+    )
 
-    summary_y = issuer_bottom - 10
-    page.append(_line("Applicant summary", 54, summary_y, "F2", 11, "0 0 0 RG"))
-    page.append(_line_rule(54, summary_y - 4, 541, summary_y - 4, "0.3 G"))
+    # Score + tier block
+    stream.append(_rect(220, 600, 355, 60, "0.975 rg", "0.5 0.5 0.5 RG"))
+    stream.append(
+        _text_line(
+            f"{latest.credit_score if latest.credit_score else 0} / 900",
+            400,
+            644,
+            "F2",
+            30,
+            "0.1 0.1 0.1 RG",
+        )
+    )
+    stream.append(
+        _text_line(
+            _tier_label(latest.risk_tier),
+            400,
+            614,
+            "F2",
+            14,
+            "0.35 0.35 0.35 RG",
+        )
+    )
 
-    summary: list[tuple[int, str, str]] = [
-        (180, "Applicant", applicant),
-        (335, "Segment / region", f"{segment} · {region}"),
-        (180, "Requested facility", f"{requested} over {tenure} months"),
-        (335, "Application No.", app_id),
-    ]
-    for index, (left, label, value) in enumerate(summary):
-        base = summary_y - 24 - (index * 17)
-        page.append(_line(label, 54, base, "F2", 8.5, "0.5 G"))
-        page.append(_line(value, left, base, "F1", 8.5))
+    # Applicant status label
+    stream.append(
+        _text_line(
+            _decision_label(application.status),
+            30,
+            610,
+            "F2",
+            14,
+            "0.35 0.35 0.35 RG",
+        )
+    )
 
-    score_y = issuer_bottom - 152
-    page.append(_line_rule(54, score_y + 6, 541, score_y + 6, "0.13 G"))
-    page.append(_line("Credit decision", 54, score_y, "F2", 11, "0 0 0 RG"))
+    # Decision block
+    stream.append(_rect(20, 540, 555, 52, "0.97 rg", "0.5 0.5 0.5 RG"))
+    decision_text = _decision_label(latest.decision)
+    stream.append(_text_line(decision_text, 33, 566, "F2", 20, "0.13 0.13 0.13 RG"))
+    limit = latest.recommended_limit if latest.recommended_limit else 0.0
+    stream.append(
+        _text_line(
+            f"Recommended credit limit: {_inr(limit)}",
+            33,
+            546,
+            "F1",
+            13,
+            "0.35 0.35 0.35 RG",
+        )
+    )
+    reason = latest.decline_reason if latest.decline_reason else "Standard policy assessment"
+    stream.append(
+        _text_line(
+            f"Reason: {reason}",
+            33,
+            530,
+            "F1",
+            11,
+            "0.5 0.5 0.5 RG",
+        )
+    )
 
-    scorecard = [
-        (180, "Credit score", f"{score} / 900"),
-        (335, "Risk tier", tier),
-        (180, "Decision", decision_label),
-        (335, "Probability of default", f"{pod:.2%}"),
-        (180, "Recommended limit", limit),
-        (335, "Model version", model_version),
-        (180, "Decline option", decline_option_label),
-        (335, "Decline reason", decline_reason_short),
-    ]
-    for index, (left, label, value) in enumerate(scorecard):
-        base = score_y - 20 - (index * 16.5)
-        page.append(_line(label, 54, base, "F2", 8.75, "0.5 G"))
-        if label in ("Decision", "Decline option"):
-            page.append(_line(value, left, base, "F1", 8.75, "0 0 0 RG"))
-        elif label == "Decline reason":
-            page.append(_line(value, left, base, "F1", 8.75, ("0.1 G" if value else "0 0 0 RG")))
-        else:
-            base = score_y - 20 - (index * 16.5)
-            page.append(_line(value, left, base, "F1", 8.75, "0 0 0 RG"))
+    # Risk indicators
+    stream.append(_text_line("Risk indicators", 30, 500, "F2", 10, "0.42 0.42 0.42 RG"))
+    stream.append(
+        _text_line(
+            f"Probability of default: {100 * (latest.probability_of_default or 0.0):.2f}%",
+            30,
+            484,
+            "F1",
+            12,
+            "0.34 0.34 0.34 RG",
+        )
+    )
 
-    factors_y = issuer_bottom - 308
-    page.append(_line_rule(54, factors_y + 6, 541, factors_y + 6, "0.13 G"))
-    page.append(_line("Principal factors (score points)", 54, factors_y, "F2", 11, "0 0 0 RG"))
+    # SHAP factor list
+    # Title bar (visible in every decision letter PDF, including the demo pipeline).
+    stream.append(_text_line(
+        "Credit Decision Letter",
+        260,
+        720,
+        "F2",
+        14,
+        "0.95 0.95 0.95 RG",
+    ))
 
-    if factors:
-        for index, (points, label, suffix) in enumerate(factors[:5]):
-            base = factors_y - 18 - (index * 16)
-            sign = "+" if points >= 0 else ""
-            page.append(_line(f"{sign}{points} pts", 54, base, "F2", 9, ("0.1 G" if points >= 0 else "0.7 G")))
-            page.append(_line(f"{label}{suffix}", 130, base, "F1", 9))
-    else:
-        page.append(_line("No principal factors were recorded for this decision.", 54, factors_y - 18, "F1", 9, "0.5 G"))
+    stream.append(_text_line("Why this decision", 30, 454, "F2", 10, "0.42 0.42 0.42 RG"))
+    y = 432
+    for line in _shap_lines(latest.shap_explanations_json):
+        stream.append(_text_line(line, 30, y, "F1", 12, "0.34 0.34 0.34 RG"))
+        y -= 22
 
-    stamp_y = 180
-    page.append(_line_rule(54, stamp_y + 90, 541, stamp_y + 90, "0.1 G"))
-    recorded_at_short = recorded_at.replace("T", " ").replace("+00:00", "UTC").replace("+05:30", "IST").replace("-05:00", "EST").replace("-06:00", "CST").replace("-07:00", "MST").replace("-08:00", "PST")
-    page.append(_line(f"Decision recorded under {bank_name}: {recorded_at_short}", 54, stamp_y + 66, "F2", 8, "0.25 G"))
-    page.append(_line("This letter is a confidential borrower copy issued by a prototype", 54, stamp_y + 36, "F1", 7.5, "0.55 G"))
-    page.append(_line("scoring engine. It must not be used as the sole basis for a live", 54, stamp_y + 26, "F1", 7.5, "0.55 G"))
-    page.append(_line("credit decision. The bank remains the decision-maker and must", 54, stamp_y + 16, "F1", 7.5, "0.55 G"))
-    page.append(_line("verify every declaration against its own records.", 54, stamp_y + 7, "F1", 7.5, "0.55 G"))
+    # Banker block
+    stream.append(_rect(20, 300, 555, 86, "0.975 rg", "0.5 0.5 0.5 RG"))
+    stream.append(_text_line("Banker", 30, 374, "F2", 10, "0.42 0.42 0.42 RG"))
+    stream.append(_text_line(banker_name or "Credit Underwriting Team", 30, 358, "F2", 16, "0.12 0.12 0.12 RG"))
+    stream.append(_text_line("Credit Underwriting Team", 30, 338, "F1", 12, "0.35 0.35 0.35 RG"))
+    if banker_email:
+        stream.append(_text_line(banker_email, 30, 322, "F1", 12, "0.35 0.35 0.35 RG"))
 
-    content = "\n".join(page).encode("ascii")
+    # Footer
+    stream.append(
+        _text_line(
+            f"Issued: {(issued_at or '')[:28]}",
+            30,
+            70,
+            "F1",
+            10,
+            "0.45 0.45 0.45 RG",
+        )
+    )
+    stream.append(
+        _text_line(
+            "Please ask your banker to regenerate the letter after the record is corrected.",
+            30,
+            56,
+            "F1",
+            9,
+            "0.55 0.55 0.55 RG",
+        )
+    )
+    stream.append(
+        _text_line(
+            f"{bank_name} · {banker_name or 'Credit Underwriting Team'} · {banker_email or ''}",
+            30,
+            40,
+            "F1",
+            9,
+            "0.5 0.5 0.5 RG",
+        )
+    )
 
-    objects = [
-        b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        (
-            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
-            b"/Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> "
-            b"/Contents 6 0 R >>"
-        ),
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
-        b"<< /Length " + str(len(content)).encode("ascii") + b" >>\nstream\n"
-        + content
-        + b"\nendstream",
-    ]
+    content = "".join(stream).encode("ascii")
+    declared_length = len(content)
 
-    pdf = bytearray(b"%PDF-1.4\n")
-    offsets: list[int] = []
-    for number, obj in enumerate(objects, start=1):
-        offsets.append(len(pdf))
-        pdf += f"{number} 0 obj\n".encode("ascii") + obj + b"\nendobj\n"
+    # Page object (3) + fonts (4, 5) + content stream object (6)
+    # Keep the whole PDF as ASCII text until the last line so the cross-reference
+    # offsets we compute here match the bytes the test round-trips through
+    # latin1.
+    stream_object = (
+        "6 0 obj\n"
+        "<< /Length "
+        + str(declared_length)
+        + " >>\n"
+        "stream\n"
+        + content.decode("ascii")
+        + "\nendstream\nendobj\n"
+    )
+    page.append(
+        "3 0 obj\n"
+        "<< /Type /Page /Parent 2 0 R "
+        "/MediaBox [0 0 595 842] "
+        "/Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> "
+        "/Contents 6 0 R >>\n"
+        "endobj\n"
+    )
+    page.append("4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n")
+    page.append("5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>\nendobj\n")
+    page.append(stream_object)
 
-    xref_offset = len(pdf)
-    pdf += f"xref\n0 {len(objects) + 1}\n".encode("ascii")
-    pdf += b"0000000000 65535 f \n"
-    for offset in offsets:
-        pdf += f"{offset:010d} 00000 n \n".encode("ascii")
-    pdf += (
-        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
-        f"startxref\n{xref_offset}\n%%EOF\n"
-    ).encode("ascii")
-    return bytes(pdf)
+    xref_offsets: list[int] = []
+    cursor = 0
+    for fragment in page:
+        cursor += len(fragment.encode("ascii"))
+        xref_offsets.append(cursor)
+
+    trailer = (
+        "xref\n0 7\n"
+        "0000000000 65535 f \n"
+        + "".join(f"{offset:010d} 00000 n \n" for offset in xref_offsets[1:])
+        + "trailer\n<< /Size 7 /Root 1 0 R >>\n"
+        "startxref\n"
+        + str(xref_offsets[-1])
+        + "\n%%EOF\n"
+    )
+
+    return "".join(page).encode("ascii") + trailer.encode("ascii")
+
+
+def build_text_pdf(
+    title: str,
+    lines: list[str],
+    **overrides: Any,
+) -> bytes:
+    """Compatibility wrapper for demos that called the old helper name.
+
+    Kept only so existing portal scaffolding (demo data and document preview
+    helpers) keeps importing the same symbol without a rename pass.
+
+    When called with the old (Application, CreditScoreResult) signature this
+    still delegates to the decision letter builder; the new (title, lines)
+    signature builds a small single-purpose proof PDF so demo scaffolding can
+    keep using the same symbol without a rename pass.
+    """
+    # Backwards-compatible two-argument form used by demo scaffolding.
+    if overrides:
+        return build_decision_letter(
+            overrides["application"],
+            overrides["latest"],
+            bank_name=overrides.get("bank_name", "AgriTrust AI"),
+            banker_name=overrides.get("banker_name", ""),
+            banker_email=overrides.get("banker_email", ""),
+            issued_at=overrides.get("issued_at", ""),
+        )
+    return _build_proof_pdf(title, lines)
+
+
+def _build_proof_pdf(title: str, lines: list[str]) -> bytes:
+    """Minimal single-page proof PDF used by demo scaffolding.
+
+    This is intentionally separate from the decision-letter builder so the
+    demo file generator (and unit tests that call build_demo_pdf) can keep
+    working while the decision letter itself stays opinionated.
+    """
+    page: list[str] = []
+    page.append("%PDF-1.4\n")
+    page.append(
+        "1 0 obj\n"
+        "<< /Type /Catalog /Pages 2 0 R >>\n"
+        "endobj\n"
+        "2 0 obj\n"
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>\n"
+        "endobj\n"
+    )
+
+    stream: list[str] = []
+    stream.append(_rect(0, 0, 595, 842, "0.985 rg", "0.5 0.5 0.5 RG"))
+    stream.append(_rect(0, 760, 595, 82, "0.16 RG", "0.4 0.4 0.4 RG"))
+    stream.append(_text_line(title, 260, 803, "F2", 24, "1 1 1 RG"))
+    stream.append(_text_line("AgriTrust AI - Demo Proof", 260, 779, "F1", 12, "0.85 0.85 0.85 RG"))
+
+    y = 720
+    for line in lines:
+        stream.append(_text_line(line, 40, y, "F1", 14, "0.12 0.12 0.12 RG"))
+        y -= 24
+        if y < 60:
+            break
+
+    content = "".join(stream).encode("ascii")
+    declared_length = len(content)
+
+    stream_object = (
+        "6 0 obj\n"
+        "<< /Length "
+        + str(declared_length)
+        + " >>\n"
+        "stream\n"
+        + content.decode("ascii")
+        + "\nendstream\nendobj\n"
+    )
+    page.append(
+        "3 0 obj\n"
+        "<< /Type /Page /Parent 2 0 R "
+        "/MediaBox [0 0 595 842] "
+        "/Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> "
+        "/Contents 6 0 R >>\n"
+        "endobj\n"
+    )
+    page.append("4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n")
+    page.append("5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>\nendobj\n")
+    page.append(stream_object)
+
+    xref_offsets: list[int] = []
+    cursor = 0
+    for fragment in page:
+        cursor += len(fragment.encode("ascii"))
+        xref_offsets.append(cursor)
+
+    trailer = (
+        "xref\n0 7\n"
+        "0000000000 65535 f \n"
+        + "".join(f"{offset:010d} 00000 n \n" for offset in xref_offsets[1:])
+        + "trailer\n<< /Size 7 /Root 1 0 R >>\n"
+        "startxref\n"
+        + str(xref_offsets[-1])
+        + "\n%%EOF\n"
+    )
+
+    return "".join(page).encode("ascii") + trailer.encode("ascii")
