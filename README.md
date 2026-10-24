@@ -50,13 +50,18 @@ bytes to `data/uploads/`, so no infrastructure is required for a demo.
 
 ### Demo accounts
 
-| Role | Email | Password |
+| Role | Email | Password / Provisioning |
 |---|---|---|
-| Bank officer | `banker@agritrust.ai` | `Banker@123` |
-| Farmer | `farmer@agritrust.ai` | `Farmer@123` |
-| Shopkeeper | `shop@agritrust.ai` | `Shop@123` |
+| Bank officer | `banker@agritrust.ai` | Provision manually: `python scripts/bootstrap_admin.py` |
+| Farmer | `farmer@agritrust.ai` | `Farmer@123` (or self-register) |
+| Shopkeeper | `shop@agritrust.ai` | `Shop@123` (or self-register) |
 
-On the landing page, click a demo card to prefill the credentials. The banker
+> **Security Note:** Bank officer and administrator accounts are never seeded with default hardcoded passwords (C1). Provision your officer account using the secure CLI bootstrap script:
+> ```bash
+> python scripts/bootstrap_admin.py --email banker@agritrust.ai --name "Priya Nair" --role banker
+> ```
+
+On the landing page, click a demo card to prefill borrower credentials. The banker
 dashboard has a **Load demo file** button that creates a pending application with
 two generated PDF proofs, so the whole workflow can be demonstrated in under a
 minute.

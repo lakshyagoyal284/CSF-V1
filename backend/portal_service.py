@@ -46,13 +46,16 @@ from backend.portal_schemas import (
     AssetDeclarationOut,
     BankerApplicationDetail,
     BankerApplicationSummary,
+    BankerReportItem,
     BorrowerApplicationOut,
+    BorrowerReportItem,
     DocumentOut,
     ScoreResultOut,
     VerifyRequest,
 )
 from backend import service as scoring_service
 from backend.report import build_decision_letter
+from backend.portal_models import ApplicationStatus, RiskTier
 from backend.storage import ALLOWED_DOC_TYPES, DocumentStorage, DocumentStorageError, StoredDocument
 from ml.config import TIER_LABELS
 
@@ -101,6 +104,23 @@ def _http(status_code: int, error: str, message: str, **extra: Any) -> HTTPExcep
     return HTTPException(
         status_code=status_code,
         detail={"error": error, "message": message, **extra},
+    )
+
+
+def _latest_score_subquery(
+    application_id: Any,
+) -> Any:
+    """Subquery returning the latest ``generated_at`` for one application.
+
+    The ``.correlate(Application)`` is required so SQLAlchemy treats the
+    ``Application.id`` reference as the outer query's column rather than
+    raising ``InvalidRequestError`` in report endpoints (C1/C2).
+    """
+    return (
+        select(func.max(CreditScoreResult.generated_at))
+        .where(CreditScoreResult.application_id == application_id)
+        .correlate(Application)
+        .scalar_subquery()
     )
 
 
@@ -524,23 +544,25 @@ def get_banker_application(db: Session, app_id: str) -> BankerApplicationDetail:
     application = _load_application(db, app_id)
     summary = _summary(application)
     latest = application.latest_score
-    return BankerApplicationDetail(
-        **summary.model_dump(),
-        borrower_id=application.borrower_id,
-        phone=application.phone,
-        age=application.age,
-        dependents=application.dependents,
-        years_in_operation=application.years_in_operation,
-        crop_type=application.crop_type,
-        loan_tenure_months=application.loan_tenure_months,
-        outstanding_debt=float(application.outstanding_debt),
-        monthly_emi_obligation=float(application.monthly_emi_obligation),
-        verified_at=application.verified_at,
-        scored_at=application.scored_at,
-        rejection_reason=application.rejection_reason,
-        assets=_asset_out(application.assets),
-        documents=[_document_out(doc) for doc in application.documents],
-        latest_score=_score_out(latest) if latest else None,
+    return BankerApplicationDetail.model_validate(
+        {
+            **summary.model_dump(),
+            "borrower_id": application.borrower_id,
+            "phone": application.phone,
+            "age": application.age,
+            "dependents": application.dependents,
+            "years_in_operation": application.years_in_operation,
+            "crop_type": application.crop_type,
+            "loan_tenure_months": application.loan_tenure_months,
+            "outstanding_debt": float(application.outstanding_debt),
+            "monthly_emi_obligation": float(application.monthly_emi_obligation),
+            "verified_at": application.verified_at,
+            "scored_at": application.scored_at,
+            "rejection_reason": application.rejection_reason,
+            "assets": _asset_out(application.assets),
+            "documents": [_document_out(doc) for doc in application.documents],
+            "latest_score": _score_out(latest) if latest else None,
+        }
     )
 
 
@@ -809,6 +831,12 @@ def reject_document(
     return get_banker_application(db, app_id)
 
 
+def list_audit_entries_out(db: Session, app_id: str, limit: int = 100) -> list[AuditEntry]:
+    """Every workflow event for a file, newest first (audit trail as API models)."""
+    entries = list_audit_entries(db, app_id, limit=limit)
+    return [AuditEntry.model_validate(entry) for entry in entries]
+
+
 def list_score_history(db: Session, app_id: str) -> list[ScoreResultOut]:
     """Every persisted decision for a file, newest first (append-only history)."""
     application = _load_application(db, app_id)
@@ -824,6 +852,25 @@ def decision_letter_pdf(db: Session, app_id: str) -> bytes:
             status.HTTP_404_NOT_FOUND,
             "not_scored",
             "A decision letter cannot be generated before the file is scored.",
+        )
+    return build_decision_letter(
+        application,
+        latest,
+        bank_name="AgriTrust AI",
+        banker_name="Credit Underwriting Team",
+        issued_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+def report_pdf(db: Session, app_id: str) -> bytes:
+    """Return the decision letter for any application that has been scored."""
+    application = _load_application(db, app_id)
+    latest = application.latest_score
+    if latest is None:
+        raise _http(
+            status.HTTP_404_NOT_FOUND,
+            "not_scored",
+            "A report cannot be generated before the application has been scored.",
         )
     return build_decision_letter(application, latest)
 
@@ -865,6 +912,87 @@ def list_audit_entries(db: Session, app_id: str, limit: int = 100) -> list[Audit
         .scalars()
         .all()
     )
+
+
+def list_banker_reports(db: Session) -> list[BankerReportItem]:
+    """All decisions a banker has ever generated, newest first."""
+    rows = (
+        db.execute(
+            select(Application, CreditScoreResult)
+            .outerjoin(
+                CreditScoreResult,
+                (CreditScoreResult.application_id == Application.id)
+                & (
+                    CreditScoreResult.generated_at
+                    == _latest_score_subquery(Application.id)
+                ),
+            )
+            .order_by(
+                CreditScoreResult.generated_at.desc().nullslast(),
+                Application.submitted_at.desc(),
+            )
+        )
+        .all()
+    )
+    return [
+        BankerReportItem(
+            id=application.id,
+            applicant_name=application.applicant_name,
+            applicant_email=application.borrower.email if application.borrower else "",
+            applicant_category=application.applicant_category,  # type: ignore[arg-type]
+            region_tier=application.region_tier,
+            requested_loan_amount=float(application.requested_loan_amount),
+            submitted_at=application.submitted_at,
+            status=application.status,  # type: ignore[arg-type]
+            rejection_reason=application.rejection_reason,
+            credit_score=latest.credit_score if latest else None,
+            risk_tier=latest.risk_tier if latest else None,  # type: ignore[arg-type]
+            decision=latest.decision if latest else None,  # type: ignore[arg-type]
+            recommended_limit=float(latest.recommended_limit) if latest else None,
+        )
+        for application, latest in rows
+    ]
+
+
+def list_borrower_reports(db: Session, borrower: User) -> list[BorrowerReportItem]:
+    """Only the signed-in borrower's own applications, newest first."""
+    rows = (
+        db.execute(
+            select(Application, CreditScoreResult)
+            .outerjoin(
+                CreditScoreResult,
+                (CreditScoreResult.application_id == Application.id)
+                & (
+                    CreditScoreResult.generated_at
+                    == _latest_score_subquery(Application.id)
+                ),
+            )
+            .where(Application.borrower_id == borrower.id)
+            .order_by(
+                CreditScoreResult.generated_at.desc().nullslast(),
+                Application.submitted_at.desc(),
+            )
+        )
+        .all()
+    )
+    return [
+        BorrowerReportItem(
+            id=application.id,
+            applicant_name=application.applicant_name,
+            applicant_category=application.applicant_category,  # type: ignore[arg-type]
+            region_tier=application.region_tier,
+            requested_loan_amount=float(application.requested_loan_amount),
+            loan_tenure_months=application.loan_tenure_months,
+            submitted_at=application.submitted_at,
+            status=application.status,  # type: ignore[arg-type]
+            rejection_reason=application.rejection_reason,
+            credit_score=latest.credit_score if latest else None,
+            risk_tier=latest.risk_tier if latest else None,  # type: ignore[arg-type]
+            decision=latest.decision if latest else None,  # type: ignore[arg-type]
+            recommended_limit=float(latest.recommended_limit) if latest else None,
+        )
+        for application, latest in rows
+    ]
 
 
 # ---------------------------------------------------------------------------

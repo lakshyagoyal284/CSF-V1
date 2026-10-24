@@ -413,7 +413,7 @@ class ScoreResponse(BaseModel):
     requested_amount_supported: bool
     indicative_rate_band: dict[str, float]
 
-    derived_ratios: dict[str, float]
+    derived_ratios: dict[str, float | None]
     explainability: Explainability
     persisted: bool = False
 

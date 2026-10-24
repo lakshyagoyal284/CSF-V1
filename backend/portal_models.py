@@ -21,11 +21,17 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+import uuid as _uuid
+import datetime as _datetime
+from typing import Any, Literal
+from datetime import datetime, timezone
+
 from sqlalchemy import (
-    JSON,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
+    JSON,
     Numeric,
     String,
     Text,
@@ -35,12 +41,20 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 #: JSONB on PostgreSQL, plain JSON on SQLite.
-JsonColumn = JSON().with_variant(JSONB(), "postgresql")
+JsonColumn: type[object] = JSON().with_variant(JSONB(), "postgresql")
+
+ApplicationStatus = Literal[
+    "pending",
+    "verified",
+    "scored",
+    "rejected",
+]
+RiskTier = Literal["LOW", "MEDIUM", "HIGH"]
 
 
 def new_id() -> str:
     """Opaque public identifier for every portal record."""
-    return str(uuid.uuid4())
+    return _uuid.uuid4().hex
 
 
 def utcnow() -> datetime:

@@ -17,6 +17,7 @@ Score pipeline for one application::
 from __future__ import annotations
 
 import logging
+import math
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Mapping
@@ -135,6 +136,16 @@ def _build_explainability(explanation: dict[str, Any]) -> Explainability:
     )
 
 
+def _clean_ratio(val: Any) -> float | None:
+    if val is None:
+        return None
+    try:
+        f = float(val)
+        return None if (math.isnan(f) or math.isinf(f)) else round(f, 4)
+    except (ValueError, TypeError):
+        return None
+
+
 def _build_score_response(
     scored: Mapping[str, Any],
     *,
@@ -169,7 +180,7 @@ def _build_score_response(
         ltv_applied=policy["ltv_applied"],
         requested_amount_supported=policy["requested_amount_supported"],
         indicative_rate_band=policy["indicative_rate_band"],
-        derived_ratios={key: round(value, 4) for key, value in scored["derived_ratios"].items()},
+        derived_ratios={key: _clean_ratio(value) for key, value in scored["derived_ratios"].items()},
         explainability=_build_explainability(scored["explanation"]),
     )
 

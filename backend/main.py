@@ -27,10 +27,12 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from pathlib import Path
 
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, RedirectResponse
+from backend.middleware import RequestSizeLimitsMiddleware, SecurityHeadersMiddleware
 from backend import service
 from backend.auth import BankerUser
 from backend.config import Settings, get_settings
@@ -38,6 +40,7 @@ from backend.db import create_all, database_health, persist_assessment, recent_a
 from backend.model_registry import ModelNotAvailable, ModelRegistry, get_registry
 from backend.portal_db import init_portal_db
 from backend.portal_routes import router as portal_router
+from backend.rate_limits import RateLimitExceeded, auth_rate_limit, limiter, rate_limit_available
 from backend.schemas import (
     HealthResponse,
     ModelInfoResponse,
@@ -60,15 +63,31 @@ async def lifespan(app: FastAPI):
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
     )
 
-    if settings.jwt_secret.startswith("agritrust-dev-secret"):
+    # Application logs must not leak borrower/banker PII (emails, phones,
+    # document storage keys). Attach a redaction filter to the root logger so
+    # every emitted line is scrubbed (L3). Audit trail rows are governed by
+    # access control and encryption-at-rest instead.
+    from backend.pii import PiiLogFilter
+
+    logging.getLogger().addFilter(PiiLogFilter())
+
+    # JWT signing material is a pre-flight hard check, not a warning. A service that
+    # starts with a weak/placeholder/short secret would issue tokens an attacker can
+    # replay or forge, so we refuse to boot instead of logging a warning.
+    settings.validate_jwt_secret()
+    settings.validate_jwt_algorithm()
+    # Demo seeding must never create banker accounts from a committed secret, and
+    # must not run against a shared (non-SQLite) database by accident.
+    if settings.portal_seed_demo:
+        if not settings.portal_database_url.startswith("sqlite"):
+            raise RuntimeError(
+                "ACS_PORTAL_SEED_DEMO=true is only supported for the zero-config SQLite demo. "
+                "For any shared database, set ACS_PORTAL_SEED_DEMO=false and provision banker "
+                "accounts through a secure bootstrap."
+            )
         logger.warning(
-            "ACS_JWT_SECRET is the insecure demo default. Set a strong secret "
-            "before exposing this service beyond localhost."
-        )
-    if settings.portal_seed_demo and not settings.portal_database_url.startswith("sqlite"):
-        logger.warning(
-            "Demo accounts with known passwords are being seeded into a "
-            "non-SQLite database. Set ACS_PORTAL_SEED_DEMO=false in a real deployment."
+            "Demo borrower accounts are being auto-created with per-database random passwords. "
+            "Banker accounts are NOT created this way - provision them through a secure bootstrap."
         )
     if str(settings.model_path).endswith("credit_model_combined.pkl"):
         logger.warning(
@@ -101,8 +120,40 @@ async def lifespan(app: FastAPI):
     # Dual-portal database. Initialisation failure is logged, not fatal: the
     # legacy scoring endpoints still work, and portal routes report a clear 500
     # rather than taking the whole service down during a demo.
+    #
+    # Seeding is now done in two steps: tables first, then demo users only when
+    # the demo flag is on *and* the database is SQLite. Any seeding that happens
+    # reports the generated borrower passwords once so they are not lost to a log-sink
+    # that nobody reads (C1).
     try:
         init_portal_db()
+        if settings.portal_seed_demo and settings.portal_database_url.startswith("sqlite"):
+            # Re-open a short-lived session just to seed and report the random demo
+            # passwords once. Banker accounts are still not created here.
+            from backend.portal_db import get_session_factory, seed_demo_users
+            from backend.portal_models import User
+            from sqlalchemy import select
+
+            generated: dict[str, str] = {}
+            with get_session_factory()() as db:
+                seed_demo_users(db, generated_passwords=generated)
+                has_banker = db.execute(
+                    select(1).where(User.email == "banker@agritrust.ai")
+                ).scalar()
+            for email, password in generated.items():
+                logger.warning(
+                    "Demo borrower account created: %s  password=%s  (local demo only)",
+                    email,
+                    password,
+                )
+            # Banker accounts are never created from a committed secret (C1). If the
+            # portal has no banker row yet, emit a one-time reminder that the team
+            # must provision one through the secure bootstrap before going live.
+            if not has_banker:
+                logger.warning(
+                    "No banker account exists yet. Provision one through the secure bootstrap script; "
+                    "do not create banker accounts from a committed secret."
+                )
         logger.info("AgriTrust portal ready (%s)", settings.portal_database_url.split("@")[-1])
     except Exception as exc:  # noqa: BLE001
         logger.exception("Portal database initialisation failed: %s", exc)
@@ -122,7 +173,7 @@ app = FastAPI(
         "* **Bank officers** verify the evidence, trigger XGBoost scoring, and see "
         "a 300-900 score, risk tier, recommended limit and SHAP reasons.\n\n"
         "Sign in via `POST /api/auth/login` and use the returned bearer token in "
-        "the Authorize dialog. Demo banker: banker@agritrust.ai / Banker@123."
+        "the Authorize dialog."
     ),
     version=_settings.api_version,
     lifespan=lifespan,
@@ -133,13 +184,83 @@ app = FastAPI(
 # Dual-portal routes (auth, borrower submissions, banker underwriting).
 app.include_router(portal_router)
 
+# CORS: explicit allow-list only. ``allow_credentials=True`` is never paired with a
+# wildcard or untrusted origin (M6/M7).
+_cors_origins = _settings.cors_origin_list
+if _cors_origins and any(o in ("*", "http://*", "https://*") for o in _cors_origins):
+    raise RuntimeError(
+        "ACS_CORS_ORIGINS must be an explicit allow-list. Wildcards are not permitted "
+        "when credentials are enabled."
+    )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_settings.cors_origin_list,
+    allow_origins=_cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=[
+        "Accept",
+        "Authorization",
+        "Content-Type",
+        "X-Requested-With",
+    ],
+    expose_headers=[
+        "Content-Disposition",
+    ],
+    max_age=600,
 )
+
+# Request-size limits enforced before bodies are read (H4). JSON payloads are
+# capped small; multipart file uploads are capped at the storage maximum so a
+# single huge upload cannot exhaust server memory even before storage rejects it.
+app.add_middleware(RequestSizeLimitsMiddleware)
+
+# Security headers on every response (H3). Strips ``X-Powered-By`` upstream and
+# enforces a strict posture by default.
+app.add_middleware(SecurityHeadersMiddleware)
+
+# Wire the rate limiter into the app once the app exists.
+if rate_limit_available and RateLimitExceeded is not None:
+    app.state.limiter = limiter
+
+    @app.exception_handler(RateLimitExceeded)
+    async def _rate_limit_exceeded(
+        request: Request, exc: RateLimitExceeded
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content={
+                "error": "rate_limited",
+                "message": "Too many requests. Please wait and try again.",
+            },
+            headers={
+                "Retry-After": "60",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+
+# Unhandled exceptions must never leak tracebacks or filesystem paths to clients
+# (H3/L2/L4). FastAPI already returns structured ``HTTPException`` bodies; this
+# handler only covers the remaining server-side errors.
+@app.exception_handler(Exception)
+async def _unhandled_exception(
+    request: Request, exc: Exception
+) -> JSONResponse:
+    # In production, send the real traceback to the structured audit log only.
+    logger.exception(
+        "Unhandled error on %s %s: %s", request.method, request.url.path, exc
+    )
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "error": "internal_error",
+            "message": "An unexpected error occurred. Please retry or contact support.",
+        },
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -186,13 +307,14 @@ def health(settings: Settings = Depends(get_settings)) -> HealthResponse:
         registry.get()
         model_loaded = True
     except ModelNotAvailable as exc:
-        detail = str(exc)
+        detail = "Model artifact is currently unavailable."
 
     db_connected = database_health() if settings.persistence_enabled else False
+    model_name = Path(registry.model_path).name if registry.model_path else "unknown"
     return HealthResponse(
         status="ok" if model_loaded else "degraded",
         model_loaded=model_loaded,
-        model_path=str(registry.model_path),
+        model_path=model_name,
         persistence_enabled=settings.persistence_enabled,
         database_connected=db_connected,
         detail=detail,
@@ -202,8 +324,9 @@ def health(settings: Settings = Depends(get_settings)) -> HealthResponse:
 @app.get("/api/model/default-info", tags=["ops"])
 def model_default_info(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     """Which model the API is configured to serve by default."""
+    model_name = Path(settings.model_path).name if settings.model_path else "unknown"
     return {
-        "configured_model_path": str(settings.model_path),
+        "configured_model_path": model_name,
         "default_is_combined_model": str(settings.model_path).endswith("credit_model_combined.pkl"),
     }
 

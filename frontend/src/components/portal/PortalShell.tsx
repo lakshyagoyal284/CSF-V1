@@ -7,6 +7,8 @@ import { useRouter } from "next/navigation";
 
 import { homeForRole, useAuth } from "@/components/portal/AuthProvider";
 import type { ApplicationStatus, Role } from "@/lib/portal-types";
+import { reportsRouteForRole } from "@/lib/portal-types";
+
 
 export function BrandMark({ className = "h-9 w-9" }: { className?: string }) {
   return (
@@ -94,27 +96,59 @@ export function PortalHeader({
 
         <div className="flex flex-wrap items-center gap-2">
           {actions}
-          {user && (
-            <div className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-800/70 py-1 pl-3 pr-1">
-              <div className="text-right">
-                <p className="text-xs font-medium leading-tight text-white">{user.full_name}</p>
-                <p className="text-[10px] uppercase tracking-wide text-slate-400">{user.role}</p>
+          {user && user.role && (
+            <>
+              <ReportsNavRoute role={user.role} />
+              <div className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-800/70 py-1 pl-3 pr-1">
+                <div className="text-right">
+                  <p className="text-xs font-medium leading-tight text-white">{user.full_name}</p>
+                  <p className="text-[10px] uppercase tracking-wide text-slate-400">{user.role}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    logout();
+                    router.replace("/");
+                  }}
+                  className="rounded-full bg-slate-700 px-2.5 py-1 text-[11px] font-medium text-slate-200 transition hover:bg-slate-600"
+                >
+                  Sign out
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  logout();
-                  router.replace("/");
-                }}
-                className="rounded-full bg-slate-700 px-2.5 py-1 text-[11px] font-medium text-slate-200 transition hover:bg-slate-600"
-              >
-                Sign out
-              </button>
-            </div>
+            </>
           )}
         </div>
       </div>
     </header>
+  );
+}
+
+function ReportsNavRoute({ role }: { role: Role }) {
+  const router = useRouter();
+  const reportsPath = reportsRouteForRole(role);
+
+  return (
+    <a
+      href={reportsPath}
+      onClick={(event) => {
+        event.preventDefault();
+        router.push(reportsPath);
+      }}
+      className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-800/70 px-2.5 py-1 text-[11px] font-medium text-slate-300 transition hover:bg-slate-700 hover:text-white"
+      title="Your reports"
+    >
+      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" aria-hidden>
+        <path
+          d="M4 5.5h16M4 9h16M4 12.5H9M12 16l-4 4 4 4"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          fill="none"
+        />
+      </svg>
+      Reports
+    </a>
   );
 }
 

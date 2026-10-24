@@ -16,6 +16,7 @@ import type {
   BankerApplicationDetail,
   BorrowerApplication,
   PortalUser,
+  ReportsListResponse,
   ScoreResult,
   UploadFileEntry,
   VerifyAndScorePayload,
@@ -84,6 +85,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       headers,
       body: options.form ?? (options.json !== undefined ? JSON.stringify(options.json) : undefined),
       cache: "no-store",
+      credentials: "include",
     });
   } catch {
     throw new PortalApiError(
@@ -93,20 +95,35 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   }
 
   if (!response.ok) {
+    // Prefer a structured FastAPI payload when it is available, but never let a
+    // misdirected frontend request masquerade as a backend "endpoint not found"
+    // message: that wording is reserved for the browser receiving a real 404 page.
     let payload: unknown = null;
-    try {
-      payload = await response.json();
-    } catch {
-      /* non-JSON error body */
+    let bodyPreview: string | null = null;
+
+    const contentType = response.headers.get("content-type");
+    if (contentType?.startsWith("application/json")) {
+      try {
+        payload = await response.json();
+      } catch {
+        /* claimed JSON, but unreadable */
+      }
+    } else {
+      bodyPreview = await response.text().catch(() => null);
     }
+
     const detail = (payload as { detail?: unknown } | null)?.detail;
     const { message, fields } = describeError(detail);
+
     const friendly =
-      response.status === 401
+      response.status === 401 && options.token
         ? "Your session is invalid or has expired. Please sign in again."
-        : response.status === 503
-          ? "The scoring model is not loaded. Run `python train_model.py` and restart the API."
-          : message;
+        : response.status === 404 && !contentType?.startsWith("application/json")
+          ? "The requested endpoint was not found."
+          : response.status === 503
+            ? "The scoring model is not loaded. Run `python train_model.py` and restart the API."
+            : message ?? bodyPreview ?? "The request could not be completed.";
+
     throw new PortalApiError(friendly, response.status, fields);
   }
 
@@ -130,6 +147,11 @@ export const portalApi = {
     request<AuthResponse>("/api/auth/register", { method: "POST", json: input }),
 
   me: (token: string) => request<PortalUser>("/api/auth/me", authHeaders(token)),
+
+  logout: () =>
+    request<{ success: boolean }>("/api/auth/logout", {
+      method: "POST",
+    }).catch(() => ({ success: true })),
 
   // -- borrower -----------------------------------------------------------
   submitApplication: (
@@ -200,6 +222,65 @@ export const portalApi = {
       token,
       method: "POST",
     }),
+
+  // -- reports -----------------------------------------------------------
+  /**
+   * Every decision the current banker has ever generated, newest first.
+   * Each row also carries the score/decision so the list can be filtered and sorted.
+   */
+  bankerReports: (token: string) =>
+    request<ReportsListResponse>("/api/banker/reports", authHeaders(token)),
+
+  /**
+   * Download one banker report as a PDF blob URL. The caller must start the
+   * download from that URL and revoke it afterwards.
+   */
+  bankerReportLetter: async (token: string, appId: string): Promise<string> => {
+    let response: Response;
+    try {
+      response = await fetch(
+        `${API_BASE}/api/banker/reports/${encodeURIComponent(appId)}/letter`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        }
+      );
+    } catch {
+      throw new PortalApiError("Cannot reach the report store.", 0);
+    }
+    if (!response.ok) {
+      throw new PortalApiError("That report could not be generated.", response.status);
+    }
+    return URL.createObjectURL(await response.blob());
+  },
+
+  /**
+   * The signed-in borrower's own scored applications, newest first.
+   */
+  myReports: (token: string) =>
+    request<ReportsListResponse>("/api/borrower/reports", authHeaders(token)),
+
+  /**
+   * Download one of the borrower's own reports as a PDF blob URL.
+   */
+  myReportLetter: async (token: string, appId: string): Promise<string> => {
+    let response: Response;
+    try {
+      response = await fetch(
+        `${API_BASE}/api/borrower/reports/${encodeURIComponent(appId)}/letter`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        }
+      );
+    } catch {
+      throw new PortalApiError("Cannot reach the report store.", 0);
+    }
+    if (!response.ok) {
+      throw new PortalApiError("That report could not be generated.", response.status);
+    }
+    return URL.createObjectURL(await response.blob());
+  },
 
   /**
    * Fetch the decision letter as a blob URL. The caller triggers the download

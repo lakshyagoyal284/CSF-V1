@@ -42,7 +42,13 @@ interface StoredSession {
 function readStoredSession(): StoredSession | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    // Check sessionStorage first (short-lived browser tab session, H2).
+    let raw = window.sessionStorage.getItem(STORAGE_KEY);
+    // If not in sessionStorage, clean up any legacy localStorage entry.
+    if (!raw) {
+      raw = window.localStorage.getItem(STORAGE_KEY);
+      if (raw) window.localStorage.removeItem(STORAGE_KEY);
+    }
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<StoredSession>;
     if (!parsed.token || !parsed.user?.role) return null;
@@ -54,8 +60,13 @@ function readStoredSession(): StoredSession | null {
 
 function storeSession(session: StoredSession | null): void {
   if (typeof window === "undefined") return;
-  if (session) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
-  else window.localStorage.removeItem(STORAGE_KEY);
+  // Always ensure localStorage has no lingering auth tokens.
+  window.localStorage.removeItem(STORAGE_KEY);
+  if (session) {
+    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+  } else {
+    window.sessionStorage.removeItem(STORAGE_KEY);
+  }
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -115,6 +126,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const logout = useCallback(() => {
+    portalApi.logout();
     storeSession(null);
     setUser(null);
     setToken(null);

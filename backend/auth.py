@@ -27,7 +27,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated, Callable, Literal
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -104,15 +104,21 @@ def create_access_token(
     settings: Settings | None = None,
     expires_delta: timedelta | None = None,
 ) -> tuple[str, int]:
-    """Mint a signed access token. Returns ``(token, expires_in_seconds)``."""
+    """Mint a short-lived signed access token. Returns ``(token, expires_in_seconds)``.
+
+    Access tokens are deliberately short-lived. Where a longer working session is
+    needed, that must be implemented as a separate refresh/rotation mechanism rather
+    than by extending this bearer token's lifetime.
+    """
     config = settings or get_settings()
     lifetime = expires_delta or timedelta(minutes=config.jwt_expiry_minutes)
     now = datetime.now(timezone.utc)
+    # Keep the token minimal: enough to identify the subject and mediate the request.
+    # Do not re-emit PII claims (email/name) into the bearer token just because they
+    # exist on the user row; the server already resolves the row from ``sub``.
     payload = {
         "sub": user.id,
         "role": user.role,
-        "email": user.email,
-        "name": user.full_name,
         "iss": config.jwt_issuer,
         "iat": now,
         "nbf": now,
@@ -123,8 +129,24 @@ def create_access_token(
 
 
 def decode_access_token(token: str, *, settings: Settings | None = None) -> dict:
-    """Validate signature, issuer and expiry. Raises ``InvalidTokenError``."""
+    """Validate signature, issuer and expiry. Raises ``InvalidTokenError``.
+
+    The secret and algorithm are enforced strictly on every decode, not just at
+    startup: a token signed with a different algorithm or a different secret must
+    be rejected rather than silently weakened (L1).
+    """
     config = settings or get_settings()
+    # Defence in depth: the lifespan already validates these, but tokens are
+    # decoded on every request, so repeat the check here.
+    if config.jwt_algorithm not in ("HS256", "HS384", "HS512"):
+        raise InvalidTokenError(
+            "Authentication service is misconfigured - unsupported signing algorithm."
+        )
+    if not config.jwt_secret or len(config.jwt_secret.encode("utf-8")) < config.JWT_SECRET_MIN_BYTES:  # type: ignore[attr-defined]
+        raise InvalidTokenError(
+            "Authentication service is misconfigured - JWT signing secret is invalid."
+        )
+
     try:
         return jwt.decode(
             token,
@@ -161,15 +183,22 @@ def _unauthorised(detail: str) -> HTTPException:
 
 
 def get_current_user(
+    request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
     db: Annotated[Session, Depends(get_db)],
 ) -> User:
-    """Resolve the bearer token to an active user row."""
-    if credentials is None or credentials.scheme.lower() != "bearer":
+    """Resolve the bearer token or secure cookie to an active user row."""
+    token = None
+    if credentials is not None and credentials.scheme.lower() == "bearer":
+        token = credentials.credentials
+    elif "access_token" in request.cookies:
+        token = request.cookies.get("access_token")
+
+    if not token:
         raise _unauthorised("Authentication required.")
 
     try:
-        claims = decode_access_token(credentials.credentials)
+        claims = decode_access_token(token)
     except InvalidTokenError as exc:
         raise _unauthorised(str(exc)) from exc
 

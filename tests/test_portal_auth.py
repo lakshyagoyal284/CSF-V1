@@ -125,9 +125,12 @@ def test_registration_cannot_escalate_to_banker(client):
 def test_duplicate_email_is_rejected_case_insensitively(client):
     email = f"duplicate-{uuid.uuid4().hex[:8]}@example.com"
     body = {"email": email, "password": "SecurePass1", "full_name": "First Applicant"}
-    assert client.post("/api/auth/register", json=body).status_code == 201
+    first = client.post("/api/auth/register", json=body)
+    assert first.status_code == 201
     body["email"] = email.upper()
-    assert client.post("/api/auth/register", json=body).status_code == 409
+    second = client.post("/api/auth/register", json=body)
+    # Anti-enumeration fix (H1/H5): uniform status code returned
+    assert second.status_code == 201
 
 
 def test_weak_password_is_rejected(client):

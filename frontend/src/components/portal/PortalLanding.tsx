@@ -15,8 +15,8 @@ const DEMO_ACCOUNTS = [
   {
     label: "Bank officer",
     email: "banker@agritrust.ai",
-    password: "Banker@123",
-    detail: "Verify evidence and run the credit model",
+    password: "",
+    detail: "Provision via bootstrap script",
   },
   {
     label: "Farmer",
@@ -32,6 +32,11 @@ const DEMO_ACCOUNTS = [
   },
 ];
 
+const TAB_LABELS: Record<Mode, { short: string; long: string }> = {
+  login: { short: "Sign in", long: "Access your portal" },
+  register: { short: "Create account", long: "Start your application" },
+};
+
 export function PortalLanding() {
   const router = useRouter();
   const { status, user, login, register } = useAuth();
@@ -43,6 +48,7 @@ export function PortalLanding() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<string[]>([]);
+  const [infoNotice, setInfoNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (status === "authenticated" && user) router.replace(homeForRole(user.role));
@@ -51,6 +57,7 @@ export function PortalLanding() {
   const resetFeedback = () => {
     setError(null);
     setFieldErrors([]);
+    setInfoNotice(null);
   };
 
   const fillDemo = (account: (typeof DEMO_ACCOUNTS)[number]) => {
@@ -58,6 +65,11 @@ export function PortalLanding() {
     setEmail(account.email);
     setPassword(account.password);
     resetFeedback();
+    if (!account.password) {
+      setInfoNotice(
+        "Bank officer accounts must be provisioned via scripts/bootstrap_admin.py. Please enter your provisioned password."
+      );
+    }
   };
 
   const handleSubmit = async (event: FormEvent) => {
@@ -87,14 +99,14 @@ export function PortalLanding() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-[520px] bg-[radial-gradient(ellipse_at_top,rgba(16,185,129,0.16),transparent_60%)]" />
+    <div className="relative min-h-screen bg-slate-950 text-slate-100">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-[420px] bg-[radial-gradient(ellipse_at_top,rgba(16,185,129,0.18),transparent_65%)]" />
 
-      <div className="relative mx-auto grid min-h-screen max-w-6xl grid-cols-1 gap-10 px-5 py-10 lg:grid-cols-[1.1fr_0.9fr] lg:items-center lg:py-16">
+      <div className="relative mx-auto grid min-h-screen max-w-6xl grid-cols-1 gap-12 px-5 py-12 lg:grid-cols-[1.05fr_0.95fr] lg:items-center lg:py-16">
         {/* narrative */}
-        <section>
+        <section className="space-y-7">
           <div className="flex items-center gap-3">
-            <BrandMark className="h-11 w-11" />
+            <BrandMark className="h-10 w-10" />
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-400">
                 AgriTrust AI
@@ -103,42 +115,50 @@ export function PortalLanding() {
             </div>
           </div>
 
-          <h1 className="mt-8 max-w-xl text-4xl font-semibold leading-tight text-white sm:text-5xl">
-            Credit for the farmers and shopkeepers the bureau never saw.
-          </h1>
-          <p className="mt-4 max-w-xl text-sm leading-relaxed text-slate-300">
-            Applicants declare what they actually own - land, equipment, inventory - and
-            their digital cash-flow footprint. Bank officers verify the evidence, then run an
-            explainable XGBoost scorecard. The applicant never touches the model.
-          </p>
+          <div>
+            <h1 className="max-w-xl text-4xl font-semibold leading-tight text-white sm:text-5xl">
+              Credit for the farmers and shopkeepers the bureau never saw.
+            </h1>
+            <p className="mt-4 max-w-xl text-sm leading-relaxed text-slate-300">
+              Applicants declare what they actually own — land, equipment, inventory — and their
+              digital cash-flow footprint. Bank officers verify the evidence, then run an explainable
+              XGBoost scorecard. The applicant never touches the model.
+            </p>
+          </div>
 
-          <dl className="mt-8 grid max-w-xl grid-cols-2 gap-3 text-xs">
+          <dl className="grid max-w-xl grid-cols-2 gap-3 text-xs">
             {[
-              ["300-900", "Calibrated credit score"],
+              ["300–900", "Calibrated credit score"],
               ["3 tiers", "Pre-approved · review · high risk"],
               ["SHAP", "Signed, ranked reasons"],
               ["Dual portal", "Borrower and banker, separated"],
             ].map(([value, label]) => (
-              <div key={label} className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+              <div
+                key={label}
+                className="rounded-xl border border-slate-800/80 bg-slate-900/50 p-3 transition hover:border-slate-700/80"
+              >
                 <dt className="text-base font-semibold text-emerald-300">{value}</dt>
                 <dd className="mt-0.5 text-slate-400">{label}</dd>
               </div>
             ))}
           </dl>
 
-          <div className="mt-8">
+          <div className="space-y-3">
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
               Demo identities
             </p>
-            <div className="mt-2 grid gap-2 sm:grid-cols-3">
+            <div className="grid gap-2.5 sm:grid-cols-3">
               {DEMO_ACCOUNTS.map((account) => (
                 <button
                   key={account.email}
                   type="button"
                   data-testid={`demo-${account.label.toLowerCase().replaceAll(" ", "-")}`}
                   onClick={() => fillDemo(account)}
-                  className="group rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-left transition hover:border-emerald-500/40 hover:bg-slate-900"
+                  className="group relative rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-left transition hover:border-emerald-500/40 hover:bg-slate-900"
                 >
+                  <span className="absolute right-3 top-3 text-[10px] font-mono text-slate-600 transition group-hover:text-slate-400">
+                    try me
+                  </span>
                   <p className="text-xs font-semibold text-white group-hover:text-emerald-300">
                     {account.label}
                   </p>
@@ -149,17 +169,17 @@ export function PortalLanding() {
                 </button>
               ))}
             </div>
-            <p className="mt-2 text-[11px] text-slate-500">
-              Click a card to prefill the form. Demo passwords follow the pattern Role@123.
+            <p className="text-[11px] text-slate-500">
+              Click a card to prefill the form — demo passwords follow the pattern Role@123.
             </p>
           </div>
         </section>
 
         {/* auth card */}
         <section className="w-full">
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 shadow-2xl shadow-black/40 backdrop-blur">
-            <div className="flex rounded-lg bg-slate-950/60 p-1 text-xs font-medium">
-              {(["login", "register"] as Mode[]).map((value) => (
+          <div className="rounded-2xl border border-slate-800/80 bg-slate-900/85 p-6 shadow-2xl shadow-black/40 backdrop-blur">
+            <div className="flex rounded-xl bg-slate-950/70 p-1">
+              {((Object.keys(TAB_LABELS) as Mode[])).map((value) => (
                 <button
                   key={value}
                   type="button"
@@ -167,19 +187,23 @@ export function PortalLanding() {
                     setMode(value);
                     resetFeedback();
                   }}
-                  className={`flex-1 rounded-md px-3 py-2 transition ${
+                  aria-pressed={mode === value}
+                  className={`relative flex-1 rounded-lg px-3 py-2 text-xs font-medium transition ${
                     mode === value
-                      ? "bg-slate-800 text-white shadow"
+                      ? "text-white shadow-sm"
                       : "text-slate-400 hover:text-slate-200"
                   }`}
                 >
-                  {value === "login" ? "Sign in" : "Create borrower account"}
+                  {TAB_LABELS[value].short}
+                  {mode === value && (
+                    <span className="absolute bottom-0 left-[2px] right-[2px] h-0.5 rounded-full bg-emerald-400" />
+                  )}
                 </button>
               ))}
             </div>
 
             <h2 className="mt-5 text-lg font-semibold text-white">
-              {mode === "login" ? "Access your portal" : "Start your application"}
+              {TAB_LABELS[mode].long}
             </h2>
             <p className="mt-1 text-xs leading-relaxed text-slate-400">
               {mode === "login"
@@ -226,6 +250,12 @@ export function PortalLanding() {
                 autoComplete={mode === "login" ? "current-password" : "new-password"}
               />
 
+              {infoNotice && (
+                <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-200">
+                  <p className="font-semibold">{infoNotice}</p>
+                </div>
+              )}
+
               {error && (
                 <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-200">
                   <p className="font-semibold">{error}</p>
@@ -243,23 +273,19 @@ export function PortalLanding() {
                 type="submit"
                 disabled={busy}
                 data-testid="auth-submit"
-                className="w-full rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+                className="w-full rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 active:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {busy
-                  ? "Please wait…"
-                  : mode === "login"
-                    ? "Sign in"
-                    : "Create account & continue"}
+                {busy ? "Please wait…" : mode === "login" ? "Sign in" : "Create account & continue"}
               </button>
             </form>
 
-            <div className="mt-5 border-t border-slate-800 pt-4 text-[11px] leading-relaxed text-slate-500">
-              <p className="font-medium text-slate-400">Role separation is enforced by the API</p>
-              <p className="mt-1">
-                A borrower token can only create and read its own application. Scoring requires a
-                banker token, verified evidence and a server-side role check.
-              </p>
-            </div>
+            <p className="mt-5 border-t border-slate-800/80 pt-4 text-[11px] leading-relaxed text-slate-500">
+              <span className="font-medium text-slate-400">Role separation is enforced by the API.</span>
+              <span className="block mt-1 text-slate-500">
+                A borrower token can only create and read its own application. Scoring requires a banker
+                token, verified evidence and a server-side role check.
+              </span>
+            </p>
           </div>
 
           <p className="mt-4 text-center text-[10px] leading-relaxed text-slate-600">
@@ -290,9 +316,10 @@ function Field({
   autoComplete?: string;
 }) {
   return (
-    <label className="block">
-      <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-400">
+    <label className="block space-y-1.5">
+      <span className="block text-xs font-medium uppercase tracking-wide text-slate-400">
         {label}
+        {required && <span className="ml-0.5 text-rose-400" aria-hidden>*</span>}
       </span>
       <input
         type={type}
@@ -301,7 +328,7 @@ function Field({
         placeholder={placeholder}
         required={required}
         autoComplete={autoComplete}
-        className="w-full rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500/40"
+        className="w-full rounded-lg border border-slate-700 bg-slate-950/70 px-3 py-2.5 text-sm text-white placeholder:text-slate-600 focus:border-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-400/40 transition"
       />
     </label>
   );

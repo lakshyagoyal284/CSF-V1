@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "verify:portal": "node scripts/verify-portal.mjs"
+    "verify:portal": "node scripts/verify-portal.mjs",
+    "audit": "npm audit --omit=dev"
   },
   "dependencies": {
     "next": "16.4.2",
@@ -24,5 +25,16 @@
     "puppeteer-core": "^25.14.0",
     "tailwindcss": "^4",
     "typescript": "^5"
-  }
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "packageManager": "npm@10.9.3",
+  "overrides": {
+    "next": "16.4.2",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "funding": [],
+  "private": true
 }

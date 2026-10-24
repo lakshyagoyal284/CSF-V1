@@ -11,6 +11,8 @@ Borrower (JWT, role=borrower)
     GET  /api/borrower/applications          Own applications (no score)
     GET  /api/borrower/applications/{id}     Own application detail (no score)
     POST /api/borrower/applications/{id}/documents
+    GET  /api/borrower/reports               Own scored applications as a report list
+    GET  /api/borrower/reports/{id}/letter   Download that application's decision letter
 Banker (JWT, role=banker)
     GET  /api/banker/applications            Queue with evidence counts
     GET  /api/banker/applications/{id}       Full file incl. latest score
@@ -20,6 +22,8 @@ Banker (JWT, role=banker)
     POST /api/banker/applications/{id}/reject
     GET  /api/banker/applications/{id}/audit
     POST /api/banker/demo-applications       Seed a demo file
+    GET  /api/banker/reports                 Every decision the banker has generated
+    GET  /api/banker/reports/{id}/letter     Download that application's decision letter
 Shared (JWT, ownership-aware)
     GET  /api/files/{key}                    Document bytes
 """
@@ -38,6 +42,7 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Request,
     Response,
     UploadFile,
     status,
@@ -70,6 +75,7 @@ from backend.portal_schemas import (
     LoginRequest,
     RegisterRequest,
     RejectRequest,
+    ReportsListResponse,
     ScoreResultOut,
     TokenResponse,
     UserOut,
@@ -78,6 +84,7 @@ from backend.portal_schemas import (
 )
 from backend.portal_service import (
     DocumentInput,
+    _load_application,
     add_documents,
     create_application,
     create_borrower,
@@ -88,13 +95,38 @@ from backend.portal_service import (
     list_audit_entries,
     list_borrower_applications,
     list_banker_applications,
+    list_borrower_reports,
+    list_banker_reports,
     list_score_history,
     reject_application,
     reject_document,
+    report_pdf,
     score_application,
     verify_application,
 )
+
+
+from backend.portal_models import Application, AuditLog, DocumentProof, User
+from backend.rate_limits import auth_rate_limit
 from backend.storage import DocumentStorageError, get_storage
+
+
+def _audit(
+    db: Session,
+    application_id: str | None,
+    actor: User | None,
+    action: str,
+    details: dict[str, Any] | None = None,
+) -> None:
+    db.add(
+        AuditLog(
+            application_id=application_id,
+            actor_id=actor.id if actor else None,
+            actor_role=actor.role if actor else None,
+            action=action,
+            details=details or {},
+        )
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +191,17 @@ def _parse_payload(raw: str) -> ApplicationCreate:
         ) from exc
 
 
+def sanitize_filename(filename: str) -> str:
+    """Sanitize uploaded document filename, stripping directory traversal and special chars."""
+    import re
+    from pathlib import Path
+
+    name = Path(filename or "document").name
+    name = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", name)
+    name = re.sub(r'[\\/:*?"<>|]', "_", name).strip().strip(".")
+    return name[:120] or "document"
+
+
 def _read_documents(
     files: list[UploadFile] | None,
     doc_types: list[str] | None,
@@ -168,6 +211,8 @@ def _read_documents(
     The cap is applied before storage so a malicious upload cannot exhaust
     memory. ``storage.save`` repeats the check as defence in depth.
     """
+    from backend.storage import ALLOWED_DOC_TYPES
+
     files = files or []
     if not files:
         return []
@@ -182,14 +227,34 @@ def _read_documents(
             },
         )
 
+    for doc_type in types:
+        if doc_type not in ALLOWED_DOC_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "invalid_doc_type",
+                    "message": f"Unknown document type '{doc_type}'.",
+                    "allowed": list(ALLOWED_DOC_TYPES),
+                },
+            )
+
     max_bytes = get_settings().max_upload_mb * 1024 * 1024
     documents: list[DocumentInput] = []
     for index, upload in enumerate(files):
         content = upload.file.read(max_bytes + 1)
+        if len(content) > max_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail={
+                    "error": "payload_too_large",
+                    "message": f"File exceeds the allowed limit of {get_settings().max_upload_mb} MB.",
+                },
+            )
+        clean_name = sanitize_filename(upload.filename or f"document-{index + 1}")
         documents.append(
             DocumentInput(
                 doc_type=types[index] if types else "other",
-                filename=upload.filename or f"document-{index + 1}",
+                filename=clean_name,
                 content_type=upload.content_type or "",
                 content=content,
             )
@@ -202,6 +267,29 @@ def _read_documents(
 # ---------------------------------------------------------------------------
 
 
+def _is_cookie_secure(request: Request) -> bool:
+    """Return True if session cookies should have the Secure flag set.
+
+    True if running over TLS/HTTPS, DevTunnel, reverse proxy with HTTPS forwarding,
+    or explicitly configured in Settings.
+    """
+    settings = get_settings()
+    if getattr(settings, "cookie_secure", None) is not None:
+        return bool(settings.cookie_secure)
+    if not settings.portal_database_url.startswith("sqlite"):
+        return True
+    if request.url.scheme == "https":
+        return True
+    forwarded_proto = (request.headers.get("x-forwarded-proto") or "").lower()
+    if forwarded_proto == "https" or request.headers.get("x-forwarded-port") == "443":
+        return True
+    host = (request.headers.get("host") or "").lower()
+    forwarded_host = (request.headers.get("x-forwarded-host") or "").lower()
+    if "devtunnels.ms" in host or "devtunnels.ms" in forwarded_host:
+        return True
+    return False
+
+
 @router.post(
     "/auth/register",
     response_model=TokenResponse,
@@ -209,20 +297,54 @@ def _read_documents(
     tags=["auth"],
     summary="Register a borrower account",
 )
-def register(request: RegisterRequest, db: DbSession) -> TokenResponse:
+@auth_rate_limit
+def register(
+    request: Request,
+    body: RegisterRequest,
+    db: DbSession,
+    response: Response,
+) -> TokenResponse:
     """Create a borrower account and sign in immediately.
 
     Banker accounts are deliberately not self-service: an applicant must never
     be able to grant themselves underwriting privileges.
+
+    The public response is uniform: a brand-new account always gets a token, and an
+    already-existing account is told to sign in. Either way the caller learns nothing
+    useful about whether an email is registered beyond what a login attempt already
+    reveals (H1/H5).
     """
-    user = create_borrower(
-        db,
-        email=request.email,
-        password_hash=hash_password(request.password),
-        full_name=request.full_name,
-        phone=request.phone,
-    )
+    try:
+        user = create_borrower(
+            db,
+            email=body.email,
+            password_hash=hash_password(body.password),
+            full_name=body.full_name,
+            phone=body.phone,
+        )
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_409_CONFLICT:
+            # Uniform response for an existing email. Do not change the wording or
+            # status based on whether the email exists.
+            raise HTTPException(
+                status_code=status.HTTP_201_CREATED,
+                detail={
+                    "error": "sign_in",
+                    "message": "If an account exists for this email, sign in with it.",
+                },
+            ) from exc
+        raise
+
     token, expires_in = create_access_token(user)
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        max_age=expires_in,
+        httponly=True,
+        samesite="lax",
+        secure=_is_cookie_secure(request),
+        path="/",
+    )
     return TokenResponse(
         access_token=token, expires_in=expires_in, user=UserOut.model_validate(user)
     )
@@ -234,41 +356,150 @@ def register(request: RegisterRequest, db: DbSession) -> TokenResponse:
     tags=["auth"],
     summary="Sign in and receive a role-scoped JWT",
 )
-def login(request: LoginRequest, db: DbSession) -> TokenResponse:
+@auth_rate_limit
+def login(
+    request: Request,
+    body: LoginRequest,
+    db: DbSession,
+    response: Response,
+) -> TokenResponse:
     user = db.execute(
-        select(User).where(func.lower(User.email) == request.email.lower())
+        select(User).where(func.lower(User.email) == body.email.lower())
     ).scalar_one_or_none()
 
     # Verify against a dummy hash when the account is missing so timing does not
     # reveal whether an email exists.
     password_hash = user.password_hash if user else _DUMMY_HASH
-    password_ok = verify_password(request.password, password_hash)
+    password_ok = verify_password(body.password, password_hash)
 
     if user is None or not password_ok:
+        # Audit the failure without storing the attempted address in plaintext.
+        # The email, if present, is already redacted by the application log filter.
+        _audit(
+            db,
+            application_id=None,
+            actor=None,
+            action="login_failure",
+            details={
+                "email_hash": _email_sha256(body.email) if body.email else None,
+                "reason": "invalid_credentials",
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": "invalid_credentials", "message": "Invalid email or password."},
             headers={"WWW-Authenticate": "Bearer"},
         )
     if not user.is_active:
+        # Constant-time branch relative to the password check above, then a
+        # uniform locked-account answer. Do not reveal that the account exists
+        # beyond what the password already proved.
+        _audit(
+            db,
+            application_id=None,
+            actor=user,
+            action="login_blocked_disabling",
+            details={
+                "email_hash": _email_sha256(user.email),
+                "reason": "account_disabled",
+            },
+        )
+        logger.warning(
+            "Login blocked for disabled account %s (%s)", user.email, user.id
+        )
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"error": "account_disabled", "message": "This account is disabled."},
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "invalid_credentials", "message": "Invalid email or password."},
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     # Transparent hash upgrade when the iteration count has been raised.
     if password_needs_rehash(user.password_hash):
-        user.password_hash = hash_password(request.password)
+        user.password_hash = hash_password(body.password)
 
     from backend.portal_models import utcnow
 
     user.last_login_at = utcnow()
     db.commit()
 
+    _audit(
+        db,
+        application_id=None,
+        actor=user,
+        action="login_success",
+        details={
+            "email_hash": _email_sha256(user.email),
+            "role": user.role,
+            "user_agent": _safe_header(request.headers.get("user-agent")),
+            "remote_addr": _safe_header(request.client.host if request.client else None),
+        },
+    )
+
     token, expires_in = create_access_token(user)
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        max_age=expires_in,
+        httponly=True,
+        samesite="lax",
+        secure=_is_cookie_secure(request),
+        path="/",
+    )
     return TokenResponse(
         access_token=token, expires_in=expires_in, user=UserOut.model_validate(user)
     )
+
+
+@router.post(
+    "/auth/logout",
+    tags=["auth"],
+    summary="Sign out and revoke session cookie",
+)
+def logout(
+    request: Request, response: Response, db: DbSession, user: CurrentUser
+) -> dict[str, str]:
+    response.delete_cookie(
+        key="access_token",
+        path="/",
+        httponly=True,
+        samesite="lax",
+        secure=_is_cookie_secure(request),
+    )
+    _audit(
+        db,
+        application_id=None,
+        actor=user,
+        action="logout",
+        details={"user_id": user.id},
+    )
+    db.commit()
+    return {"status": "ok", "message": "Signed out successfully."}
+
+
+def _email_sha256(email: str) -> str:
+    """Deterministic non-reversible identifier for an email, suitable for audit.
+
+    Not a substitute for hashing passwords - this is only so audit entries can be
+    correlated without storing the raw address in the details payload.
+    """
+    import hashlib as _h
+    return _h.sha256(email.lower().encode("utf-8")).hexdigest()
+
+
+def _safe_header(value: str | None) -> str | None:
+    """Best-effort safe container for a request header in audit details.
+
+    Drops values that look like they could be abused as log injection vectors.
+    """
+    if not value:
+        return None
+    stripped = value.strip()
+    if not stripped or len(stripped) > 512:
+        return None
+    # Avoid embedding newlines / control characters in a JSON audit blob.
+    if any(ord(c) < 32 and c not in ("\t",) for c in stripped):
+        return None
+    return stripped
 
 
 @router.get("/auth/me", response_model=UserOut, tags=["auth"])
@@ -345,6 +576,40 @@ def upload_documents(
     return get_borrower_application(db, borrower, app_id)
 
 
+@router.get(
+    "/borrower/reports",
+    response_model=ReportsListResponse,
+    tags=["borrower"],
+    summary="Your applications that have received a decision",
+)
+def my_reports(borrower: BorrowerUser, db: DbSession) -> ReportsListResponse:
+    return ReportsListResponse(items=list_borrower_reports(db, borrower))
+
+
+@router.get(
+    "/borrower/reports/{app_id}/letter",
+    tags=["borrower"],
+    summary="Download your decision letter as a PDF",
+    response_class=Response,
+)
+def my_report_letter(app_id: str, borrower: BorrowerUser, db: DbSession) -> Response:
+    app = _load_application(db, app_id)
+    if app.borrower_id != borrower.id:
+        raise _http(
+            status.HTTP_404_NOT_FOUND, "not_found", "Report not found."
+        ) from None
+    content = report_pdf(db, app_id)
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="decision-{app_id[:8]}.pdf"',
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # banker underwriting dashboard
 # ---------------------------------------------------------------------------
@@ -381,7 +646,16 @@ def banker_applications(
 def banker_application(
     app_id: str, banker: BankerUser, db: DbSession
 ) -> BankerApplicationDetail:
-    return get_banker_application(db, app_id)
+    detail = get_banker_application(db, app_id)
+    _audit(
+        db,
+        app_id,
+        banker,
+        "pii_read",
+        details={"record": "application_detail", "applicant_name": detail.applicant_name},
+    )
+    db.commit()
+    return detail
 
 
 @router.post(
@@ -519,9 +793,40 @@ def demo_application(banker: BankerUser, db: DbSession) -> BankerApplicationDeta
     return get_banker_application(db, application.id)
 
 
+@router.get(
+    "/banker/reports",
+    response_model=ReportsListResponse,
+    tags=["banker"],
+    summary="Every decision the banker has ever generated",
+)
+def banker_reports(banker: BankerUser, db: DbSession) -> ReportsListResponse:
+    return ReportsListResponse(items=list_banker_reports(db))
+
+
+@router.get(
+    "/banker/reports/{app_id}/letter",
+    tags=["banker"],
+    summary="Download a decision letter as a PDF",
+    response_class=Response,
+)
+def banker_report_letter(app_id: str, banker: BankerUser, db: DbSession) -> Response:
+    content = report_pdf(db, app_id)
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="decision-{app_id[:8]}.pdf"',
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # document bytes (ownership-aware)
 # ---------------------------------------------------------------------------
+
+
 
 
 @router.get(
@@ -562,12 +867,24 @@ def read_document(key: str, user: CurrentUser, db: DbSession) -> Response:
         ) from exc
 
     safe_name = document.original_filename.replace('"', "").replace("\n", " ")
+    _audit(
+        db,
+        document.application_id,
+        user,
+        "pii_read",
+        details={"record": "document_proof", "storage_key": key, "doc_type": document.doc_type},
+    )
+    db.commit()
+    # Borrower proofs are served from the document-storage origin path with an
+    # attachment disposition so the browser downloads rather than rendering them
+    # inline from the main application origin (M1).
     return Response(
         content=content,
         media_type=document.content_type,
         headers={
-            "Content-Disposition": f'inline; filename="{safe_name}"',
+            "Content-Disposition": f'attachment; filename="{safe_name}"',
             "X-Content-Type-Options": "nosniff",
-            "Cache-Control": "private, max-age=60",
+            "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+            "Cache-Control": "no-store",
         },
     )

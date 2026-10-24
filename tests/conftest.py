@@ -85,11 +85,15 @@ class AuthenticatedTestClient:
         return self._client
 
     def _call(self, method: str, url: str, **kwargs):
+        preserve_cookies = kwargs.pop("preserve_cookies", False)
         if url.startswith(_LEGACY_PROTECTED):
             headers = dict(kwargs.pop("headers", {}) or {})
             headers.setdefault("Authorization", f"Bearer {self._token}")
             kwargs["headers"] = headers
-        return getattr(self._client, method)(url, **kwargs)
+        res = getattr(self._client, method)(url, **kwargs)
+        if not preserve_cookies:
+            self._client.cookies.clear()
+        return res
 
     def get(self, url: str, **kwargs):
         return self._call("get", url, **kwargs)
@@ -129,18 +133,39 @@ def client(model_path, tmp_path_factory):
     from fastapi.testclient import TestClient
 
     from backend.main import app
+    from scripts.bootstrap_admin import bootstrap_user
 
     with TestClient(app) as test_client:
+        bootstrap_user(
+            email="banker@agritrust.ai",
+            password="Banker@123",
+            full_name="Priya Nair",
+            role="banker",
+        )
         login = test_client.post(
             "/api/auth/login",
             json={"email": "banker@agritrust.ai", "password": "Banker@123"},
         )
         assert login.status_code == 200, login.text
         token = login.json()["access_token"]
+        test_client.cookies.clear()
         yield AuthenticatedTestClient(test_client, token)
 
     reset_portal_state()
     reset_storage()
+
+
+@pytest.fixture(autouse=True)
+def clear_client_cookies(client):
+    """Ensure cookie state and rate limits are isolated across test invocations."""
+    client.raw.cookies.clear()
+    from backend.rate_limits import limiter
+    if limiter is not None:
+        limiter.reset()
+    yield
+    client.raw.cookies.clear()
+    if limiter is not None:
+        limiter.reset()
 
 
 def base_application() -> dict:

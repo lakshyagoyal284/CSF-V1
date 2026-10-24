@@ -297,19 +297,32 @@ export function BankerUnderwritingDashboard() {
   };
 
   const downloadLetter = async () => {
-    if (!token || !detail) return;
+    if (!token) {
+      console.error("[DecisionLetter] No auth token available.");
+      setError("Session expired. Please log in again.");
+      return;
+    }
+    if (!detail || !detail.id) {
+      console.error("[DecisionLetter] No application detail available. Ensure the application has been scored first.");
+      setError("No application data available. Please select an application first.");
+      return;
+    }
     setBusy(true);
     try {
       const url = await portalApi.decisionLetter(token, detail.id);
       const anchor = document.createElement("a");
       anchor.href = url;
       anchor.download = `decision-${detail.id.slice(0, 8)}.pdf`;
+      anchor.style.display = "none";
       document.body.appendChild(anchor);
       anchor.click();
+      // Keep the anchor in the DOM briefly so the browser has time to start the download.
+      await new Promise((resolve) => setTimeout(resolve, 500));
       anchor.remove();
-      // Give the browser time to start the download before revoking the blob.
+      // Revoke the blob URL after a delay so the browser has finished downloading.
       window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
     } catch (caught) {
+      console.error("[DecisionLetter] Failed to download decision letter:", caught);
       handleApiError(caught);
     } finally {
       setBusy(false);
@@ -807,6 +820,7 @@ export function BankerUnderwritingDashboard() {
                             disabled={busy}
                             data-testid="download-decision-letter"
                             className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+                            title="Download a PDF decision letter for this application"
                           >
                             Decision letter
                           </button>

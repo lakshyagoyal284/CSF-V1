@@ -11,6 +11,21 @@ import type { Explainability, RiskTier, ScoreBand } from "./types";
 export type Role = "borrower" | "banker";
 export type ApplicantCategory = "farmer" | "small_business";
 export type RegionTier = "rural" | "semi_urban" | "urban";
+
+// Kept as stable lookup helpers so both the shell and the report pages can route
+// without importing one another.
+export const ROLE_ROUTES: Readonly<Record<Role, string>> = Object.freeze({
+  borrower: "/",
+  banker: "/banker",
+});
+
+export function homeForRole(role: Role): string {
+  return ROLE_ROUTES[role];
+}
+
+export function reportsRouteForRole(role: Role): string {
+  return ROLE_ROUTES[role] + "/reports";
+}
 export type CropType =
   | "rice"
   | "wheat"
@@ -175,6 +190,45 @@ export interface ApplicationListResponse {
   limit: number;
   offset: number;
 }
+
+export interface BankerReportItem {
+  id: string;
+  applicant_name: string;
+  applicant_email: string;
+  applicant_category: ApplicantCategory;
+  region_tier: RegionTier;
+  requested_loan_amount: number;
+  submitted_at: string;
+  status: ApplicationStatus;
+  rejection_reason: string | null;
+  credit_score: number | null;
+  risk_tier: RiskTier | null;
+  decision: string | null;
+  recommended_limit: number | null;
+}
+
+export interface BorrowerReportItem {
+  id: string;
+  applicant_name: string;
+  applicant_category: ApplicantCategory;
+  region_tier: RegionTier;
+  requested_loan_amount: number;
+  loan_tenure_months: number;
+  submitted_at: string;
+  status: ApplicationStatus;
+  rejection_reason: string | null;
+  credit_score: number | null;
+  risk_tier: RiskTier | null;
+  decision: string | null;
+  recommended_limit: number | null;
+}
+
+export interface ReportsListResponse {
+  items: Array<BankerReportItem | BorrowerReportItem>;
+}
+
+// Keep a typed union visible for code that needs to narrow the list items.
+export type ReportsListItem = BankerReportItem | BorrowerReportItem;
 
 export interface AuditEntry {
   id: string;

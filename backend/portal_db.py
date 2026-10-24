@@ -31,14 +31,18 @@ _engine: Engine | None = None
 _session_factory: sessionmaker[Session] | None = None
 _lock = threading.Lock()
 
-#: Demo identities. The password is deliberately simple because this is a
-#: hackathon build; production deployments must provision bankers out-of-band.
+#: Demo identities shipped for the zero-config SQLite demo.
+#: Only emails are published here. Passwords are never committed: for the local
+#: demo they are generated once per database at seed time and written to the
+#: startup log; for any other deployment the accounts must be provisioned through
+#: a secure bootstrap (C1).
+# Bank officers are NOT created through the zero-config demo seed path. Any banker
+# account must be provisioned through a secure admin bootstrap with a strong
+# password (C1). The value below is the published lookup email only and is not
+# seeded by default.
 DEMO_BANKER_EMAIL = "banker@agritrust.ai"
-DEMO_BANKER_PASSWORD = "Banker@123"
 DEMO_FARMER_EMAIL = "farmer@agritrust.ai"
-DEMO_FARMER_PASSWORD = "Farmer@123"
 DEMO_SHOP_EMAIL = "shop@agritrust.ai"
-DEMO_SHOP_PASSWORD = "Shop@123"
 
 
 # ---------------------------------------------------------------------------
@@ -164,43 +168,65 @@ def init_portal_db(*, seed: bool | None = None) -> None:
             seed_demo_users(db)
 
 
-def seed_demo_users(db: Session) -> int:
-    """Create the demo banker and borrowers if the users table is empty.
+def seed_demo_users(db: Session, *, generated_passwords: dict[str, str] | None = None) -> int:
+    """Create demo borrower accounts for the zero-config SQLite demo (C1).
+
+    Demo *banker* accounts are deliberately NOT created here: bankers must be
+    provisioned through a secure bootstrap / admin script with a strong password,
+    not from a committed value.
 
     Returns the number of accounts created. Idempotent: safe on every boot.
+    If ``generated_passwords`` is supplied, the generated passwords are returned
+    so the caller can record them once (e.g. in a secure bootstrap log) rather
+    than reusing a fixed secret.
     """
     existing = db.execute(select(func.count()).select_from(User)).scalar_one()
     if existing:
         return 0
 
-    # Imported lazily: backend.auth depends on this module for its DB session,
-    # so a module-level import here would be circular.
     from backend.auth import hash_password
 
-    demo_accounts = [
-        User(
-            email=DEMO_BANKER_EMAIL,
-            password_hash=hash_password(DEMO_BANKER_PASSWORD),
-            role="banker",
-            full_name="Priya Nair",
-            phone="+91 90000 11111",
-        ),
-        User(
-            email=DEMO_FARMER_EMAIL,
-            password_hash=hash_password(DEMO_FARMER_PASSWORD),
-            role="borrower",
-            full_name="Ramesh Yadav",
-            phone="+91 90000 22222",
-        ),
-        User(
-            email=DEMO_SHOP_EMAIL,
-            password_hash=hash_password(DEMO_SHOP_PASSWORD),
-            role="borrower",
-            full_name="Sunita Devi",
-            phone="+91 90000 33333",
-        ),
-    ]
-    db.add_all(demo_accounts)
+    # Generate strong random passwords for the demo borrowers once per database.
+    # Storing these in the process log is acceptable for a local demo only;
+    # any shared deployment must provision its own accounts.
+    gen = generated_passwords or {}
+    created: list[User] = []
+
+    for email, full_name, phone in (
+        (DEMO_FARMER_EMAIL, "Ramesh Yadav", "+91 90000 22222"),
+        (DEMO_SHOP_EMAIL, "Sunita Devi", "+91 90000 33333"),
+    ):
+        password = gen.get(email) or _generate_demo_password()
+        created.append(
+            User(
+                email=email,
+                password_hash=hash_password(password),
+                role="borrower",
+                full_name=full_name,
+                phone=phone,
+            )
+        )
+        if generated_passwords is not None:
+            generated_passwords[email] = password
+
+    db.add_all(created)
     db.flush()
-    logger.info("Seeded %d demo portal accounts", len(demo_accounts))
-    return len(demo_accounts)
+    logger.info(
+        "Seeded %d demo borrower accounts (passwords generated once - do not commit them)",
+        len(created),
+    )
+    return len(created)
+
+
+def _generate_demo_password() -> str:
+    """A readable-but-strong demo password for the local SQLite demo only.
+
+    Not intended for shared environments.
+    """
+    import secrets as _secrets
+    import string as _string
+
+    alphabet = _string.ascii_letters + _string.digits
+    raw = _secrets.token_urlsafe(22)
+    # Keep it bankable by humans for a one-session demo while still being strong.
+    return raw[:14] + "=" + raw[14:20]

@@ -12,6 +12,9 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from typing import ClassVar
+
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from ml.config import DEFAULT_MODEL_PATH  # still the training default; serving default is set in Settings.model_path
@@ -63,10 +66,21 @@ class Settings(BaseSettings):
 
     # --- authentication -------------------------------------------------------
     #: HS256 signing secret. MUST be overridden in any shared environment.
-    jwt_secret: str = "agritrust-dev-secret-change-me-before-deploying"
+    #: Refuses to start without a strong secret of at least 256 bits (32 bytes).
+    jwt_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "jwt_secret", "jwt_secret_key", "acs_jwt_secret", "acs_jwt_secret_key"
+        ),
+    )
     jwt_algorithm: str = "HS256"
     jwt_issuer: str = "agritrust-ai"
-    jwt_expiry_minutes: int = 480
+    #: Short-lived access tokens for the dual portal. Long-lived bearer tokens
+    #: stored in browser storage are a credential-theft risk; keep this in the
+    #: access-token range (minutes, not hours).
+    jwt_expiry_minutes: int = 15
+    #: Override Secure flag for auth cookies. When None, auto-detected from TLS, DevTunnel, or database.
+    cookie_secure: bool | None = None
 
     # --- document storage (simulated object storage) --------------------------
     upload_dir: str = "data/uploads"
@@ -84,14 +98,66 @@ class Settings(BaseSettings):
     score_min: int = 300
     score_max: int = 900
 
+    #: Minimum acceptable JWT secret length in bytes (256 bits).
+    #: Not a settings field - a compile-time constant used by the hard checks.
+    JWT_SECRET_MIN_BYTES: ClassVar[int] = 32
+
     @property
     def cors_origin_list(self) -> list[str]:
-        """CORS origins as a list, parsed from the comma-separated setting."""
+        """CORS origins as a list, parsed from the comma-separated setting.
+
+        In production this must be an explicit allow-list. Never pair
+        ``allow_credentials=True`` with ``*`` or an untrusted origin.
+        """
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
     @property
     def persistence_enabled(self) -> bool:
         return bool(self.database_url)
+
+    def validate_jwt_secret(self) -> None:
+        """Fail fast at startup if JWT signing material is unsafe.
+
+        Called once during the app lifespan so a misconfigured deployment
+        does not start serving tokens signed with a default or undersized
+        secret.
+        """
+        secret = self.jwt_secret or ""
+        # Detect placeholder / shipped-default values that happen to be long enough.
+        low_entropy_markers = (
+            "change me",
+            "change-me",
+            "changeme",
+            "set me",
+            "set-me",
+            "setme",
+            "placeholder",
+            "REPLACE",
+            "replace",
+            "YOUR",
+            "your",
+            "agritrust-dev-secret",
+        )
+        if any(marker in secret.lower() for marker in low_entropy_markers):
+            raise ValueError(
+                "ACS_JWT_SECRET is set to a placeholder/non-secret value. "
+                "Generate a strong random secret (at least 32 bytes) and set ACS_JWT_SECRET."
+            )
+        if not secret:
+            raise ValueError(
+                "ACS_JWT_SECRET is not set. The API refuses to start without a signing secret."
+            )
+        if len(secret.encode("utf-8")) < self.JWT_SECRET_MIN_BYTES:
+            raise ValueError(
+                "ACS_JWT_SECRET must be at least 32 bytes (256 bits)."
+            )
+
+    def validate_jwt_algorithm(self) -> None:
+        """Allow only symmetric HMAC algorithms for this HS256 service."""
+        if self.jwt_algorithm not in ("HS256", "HS384", "HS512"):
+            raise ValueError(
+                f"ACS_JWT_ALGORITHM must be one of HS256/HS384/HS512, got {self.jwt_algorithm!r}."
+            )
 
 
 @lru_cache(maxsize=1)

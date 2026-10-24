@@ -16,8 +16,11 @@ import type {
   SimulateResponse,
 } from "./types";
 
-export const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") ?? "http://localhost:8000";
+// When NEXT_PUBLIC_API_BASE is unset we proxy /api/* through the Next.js
+// dev server (next.config.ts rewrite), so the browser call is same-origin.
+// The default must stay empty: every request path already starts with "/api",
+// so defaulting to "/api" would produce /api/api/... and a 404.
+export const API_BASE = process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") ?? "";
 
 export class ApiError extends Error {
   constructor(

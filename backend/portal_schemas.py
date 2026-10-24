@@ -14,7 +14,6 @@ Two deliberate separations live in this file:
    :class:`BorrowerApplicationOut`, which simply has no score fields - a safer
    guarantee than filtering a banker payload at runtime.
 """
-
 from __future__ import annotations
 
 import re
@@ -31,6 +30,25 @@ from backend.schemas import (
     Explainability,
     ScoreRequest,
 )
+
+
+def _warm_models() -> None:
+    # Warm the portal response models early so route handlers that depend on them
+    # do not hit "class not fully defined" under lazy-import ordering. This is a
+    # Pydantic-v2 model-rebuild ordering issue, not a schema bug.
+    for model in (
+        BankerApplicationDetail,
+        AuditTrailResponse,
+        ScoreResultOut,
+        BankerApplicationSummary,
+        BorrowerApplicationOut,
+        ApplicationListResponse,
+        BankerReportItem,
+        BorrowerReportItem,
+        ReportsListResponse,
+    ):
+        model.model_rebuild(force=True)
+
 
 ApplicationStatus = Literal["pending", "verified", "scored", "rejected"]
 RiskTier = Literal["LOW", "MEDIUM", "HIGH"]
@@ -50,6 +68,72 @@ CropType = Literal["rice", "wheat", "cotton", "sugarcane", "horticulture", "puls
 
 _STRICT = ConfigDict(extra="forbid")
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+# ---------------------------------------------------------------------------
+# reports
+# ---------------------------------------------------------------------------
+
+
+class BankerReportItem(BaseModel):
+    """One banker-generated decision summary.
+
+    Used by ``/api/banker/reports`` so the dashboard can show the full decision
+    list without loading the heavy application detail page.
+    """
+
+    model_config = ConfigDict(from_attributes=False)
+
+    id: str
+    applicant_name: str
+    applicant_email: str
+    applicant_category: Literal["farmer", "small_business"]
+    region_tier: Literal["rural", "semi_urban", "urban"]
+    requested_loan_amount: float
+    submitted_at: datetime | None = None
+    status: Literal["pending", "verified", "scored", "rejected"] | None = None
+    rejection_reason: str | None = None
+    credit_score: int | None = None
+    risk_tier: Literal["LOW", "MEDIUM", "HIGH"] | None = None
+    decision: str | None = None
+    recommended_limit: float | None = None
+
+
+    # The frontend treats ``items`` as ``BankerReportItem | BorrowerReportItem``
+
+
+class BorrowerReportItem(BaseModel):
+    """One borrower-scoped decision summary.
+
+    Mirrors the banker view but intentionally omits email so the list stays
+    borrower-owned.
+    """
+
+    model_config = ConfigDict(from_attributes=False)
+
+    id: str
+    applicant_name: str
+    applicant_category: Literal["farmer", "small_business"]
+    region_tier: Literal["rural", "semi_urban", "urban"]
+    requested_loan_amount: float
+    loan_tenure_months: int
+    submitted_at: datetime | None = None
+    status: Literal["pending", "verified", "scored", "rejected"] | None = None
+    rejection_reason: str | None = None
+    credit_score: int | None = None
+    risk_tier: Literal["LOW", "MEDIUM", "HIGH"] | None = None
+    decision: str | None = None
+    recommended_limit: float | None = None
+
+
+class ReportsListResponse(BaseModel):
+    """Union response for both report list endpoints.
+
+    The frontend treats ``items`` as ``BankerReportItem | BorrowerReportItem``
+    and narrows by presence of ``applicant_email``.
+    """
+
+    items: list[BankerReportItem | BorrowerReportItem]
 
 
 # ---------------------------------------------------------------------------
@@ -384,6 +468,7 @@ class BankerApplicationSummary(BaseModel):
 
 class BankerApplicationDetail(BankerApplicationSummary):
     borrower_id: str
+    borrower_email: str | None = None
     phone: str | None = None
     age: int | None = None
     dependents: int | None = None
@@ -398,6 +483,52 @@ class BankerApplicationDetail(BankerApplicationSummary):
     assets: AssetDeclarationOut | None = None
     documents: list[DocumentOut] = Field(default_factory=list)
     latest_score: ScoreResultOut | None = None
+
+    @classmethod
+    def model_rebuild(cls, **kwargs: Any) -> type[BankerApplicationDetail]:
+        """Warm the model so response validation works even under lazy imports."""
+        return super().model_rebuild(**kwargs)
+
+
+class LoginRequest(BaseModel):
+    model_config = _STRICT
+
+    email: str = Field(max_length=255)
+    password: str = Field(min_length=1, max_length=200)
+
+    @field_validator("email")
+    @classmethod
+    def _normalise_email(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not _EMAIL_RE.match(value):
+            raise ValueError("Enter a valid email address.")
+        return value
+
+
+class RegisterRequest(BaseModel):
+    """Borrower self-registration. Bankers are provisioned by an administrator."""
+
+    model_config = _STRICT
+
+    email: str = Field(max_length=255)
+    password: str = Field(min_length=8, max_length=200)
+    full_name: str = Field(min_length=2, max_length=160)
+    phone: str | None = Field(default=None, max_length=20)
+
+    @field_validator("email")
+    @classmethod
+    def _normalise_email(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not _EMAIL_RE.match(value):
+            raise ValueError("Enter a valid email address.")
+        return value
+
+    @field_validator("password")
+    @classmethod
+    def _password_strength(cls, value: str) -> str:
+        if not re.search(r"[A-Za-z]", value) or not re.search(r"\d", value):
+            raise ValueError("Password must contain at least one letter and one digit.")
+        return value
 
 
 class ApplicationListResponse(BaseModel):
@@ -459,5 +590,55 @@ class AuditEntry(BaseModel):
     created_at: datetime
 
 
+class BankerReportItem(BaseModel):
+    """One row a banker sees in the reports list: the file plus its decision."""
+
+    id: str
+    applicant_name: str
+    applicant_email: str
+    applicant_category: Literal["farmer", "small_business"]
+    region_tier: str
+    requested_loan_amount: float
+    submitted_at: datetime
+    status: ApplicationStatus
+    rejection_reason: str | None = None
+    credit_score: int | None = None
+    risk_tier: RiskTier | None = None
+    decision: str | None = None
+    recommended_limit: float | None = None
+
+
+class BorrowerReportItem(BaseModel):
+    """One row a borrower sees in the reports list: their own application result."""
+
+    id: str
+    applicant_name: str
+    applicant_category: Literal["farmer", "small_business"]
+    region_tier: str
+    requested_loan_amount: float
+    loan_tenure_months: int
+    submitted_at: datetime
+    status: ApplicationStatus
+    rejection_reason: str | None = None
+    credit_score: int | None = None
+    risk_tier: RiskTier | None = None
+    decision: str | None = None
+    recommended_limit: float | None = None
+
+
+class ReportsListResponse(BaseModel):
+    items: list[BankerReportItem | BorrowerReportItem]
+
+
 class AuditTrailResponse(BaseModel):
     items: list[AuditEntry]
+
+
+ReportsListItem = BankerReportItem | BorrowerReportItem
+
+
+# Warm the portal response models early so route handlers that depend on them
+# do not hit "class not fully defined" under lazy-import ordering. This is a
+# Pydantic-v2 model-rebuild ordering issue, not a schema bug.
+# These calls must appear after every referenced model is defined in this module.
+_warm_models()

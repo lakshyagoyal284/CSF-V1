@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.auth import hash_password
-from backend.portal_db import DEMO_FARMER_EMAIL, DEMO_FARMER_PASSWORD
+from backend.portal_db import DEMO_FARMER_EMAIL
 from backend.portal_models import Application, User
 from backend.portal_schemas import ApplicationCreate
 from backend.portal_service import DocumentInput, create_application
@@ -26,6 +26,17 @@ from backend.report import build_text_pdf
 from backend.storage import DocumentStorage
 
 logger = logging.getLogger(__name__)
+
+
+def _random_password() -> str:
+    """Strong random password for the one-off demo borrower created by the demo button.
+
+    This path is only hit when demo seeding is disabled but the demo-data button is
+    used; the account is short-lived and the password is not committed anywhere.
+    """
+    import secrets as _secrets
+
+    return _secrets.token_urlsafe(18)
 
 
 #: Backwards-compatible name used by older call sites and tests.
@@ -78,7 +89,7 @@ def create_demo_application(db: Session, storage: DocumentStorage) -> Applicatio
         # Demo seeding can be disabled; make the demo button still work.
         borrower = User(
             email=DEMO_FARMER_EMAIL,
-            password_hash=hash_password(DEMO_FARMER_PASSWORD),
+            password_hash=hash_password(_random_password()),
             role="borrower",
             full_name="Ramesh Yadav",
             phone="+91 90000 22222",

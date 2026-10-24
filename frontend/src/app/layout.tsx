@@ -14,6 +14,10 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// Security headers are enforced server-side on the FastAPI API origin. The Next.js
+// app is served from the same origin in this repo (next.config.ts proxies /api/*),
+// so these headers harden the UI itself and remove the framework's default
+// X-Powered-By exposure (H3).
 export const metadata: Metadata = {
   title: "AgriTrust AI · Alternative Credit Scoring",
   description:
