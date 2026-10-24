@@ -44,6 +44,19 @@ async function domClick(page, selector) {
   if (!clicked) throw new Error(`Element "${selector}" not found`);
 }
 
+async function clickButtonText(page, text) {
+  const clicked = await page.evaluate((target) => {
+    const buttons = Array.from(document.querySelectorAll("button"));
+    const button = buttons.find((b) =>
+      b.textContent.toLowerCase().includes(target.toLowerCase())
+    );
+    if (!button) return false;
+    button.click();
+    return true;
+  }, text);
+  if (!clicked) throw new Error(`Button containing "${text}" not found`);
+}
+
 const browser = await puppeteer.launch({
   executablePath: CHROME,
   headless: true,
@@ -243,6 +256,31 @@ try {
   await page.waitForSelector('[data-testid="decision-success-notice"]', { timeout: 10000 });
   const successText = await page.$eval('[data-testid="decision-success-notice"]', (el) => el.innerText);
   check("Application formally declined with adverse parameters recorded", successText.includes("formally declined"));
+
+  // 5. TEST BORROWER PORTAL APPROVED APPLICATION VIEW
+  console.log("\n--- Testing Borrower portal approved application view ---");
+  await clickButtonText(page, "Sign out");
+  await page.waitForFunction(() => window.location.pathname === "/", { timeout: 15000 });
+  await page.waitForSelector('[data-testid="demo-farmer"]', { timeout: 15000 });
+  await new Promise((r) => setTimeout(r, 1000));
+  await page.click('[data-testid="demo-farmer"]');
+  await page.waitForFunction(
+    () => (document.querySelector('input[type="email"]')?.value?.length ?? 0) > 0,
+    { timeout: 5000 },
+  );
+  await page.click('[data-testid="auth-submit"]');
+  await page.waitForFunction(() => window.location.pathname === "/borrower", { timeout: 30000 });
+  await waitText(page, "Your credit application");
+  check("Farmer reaches borrower portal", true);
+
+  await waitText(page, "My applications");
+  await new Promise((r) => setTimeout(r, 1500));
+  const borrowerBody = await page.evaluate(() => document.body.innerText);
+  const borrowerText = borrowerBody.toLowerCase();
+  check("Borrower sees Sanction Approved badge", borrowerText.includes("sanction approved"));
+  check("Borrower sees Calculated Credit Score", borrowerText.includes("calculated credit score"));
+  check("Borrower sees Banker Sanction Notes", borrowerText.includes("banker sanction notes"));
+  check("Borrower sees Branch Visit Notice", borrowerText.includes("next step for disbursement"));
 
   console.log("\n==========================================");
   console.log(`Summary: ${checks.filter((c) => c.passed).length} / ${checks.length} checks passed.`);

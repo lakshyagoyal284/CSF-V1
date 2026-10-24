@@ -406,47 +406,54 @@ def list_borrower_applications(db: Session, borrower: User) -> list[BorrowerAppl
         .scalars()
         .all()
     )
-    return [
-        BorrowerApplicationOut(
-            id=app.id,
-            status=app.status,  # type: ignore[arg-type]
-            applicant_name=app.applicant_name,
-            applicant_category=app.applicant_category,  # type: ignore[arg-type]
-            region_tier=app.region_tier,
-            requested_loan_amount=float(app.requested_loan_amount),
-            loan_tenure_months=app.loan_tenure_months,
-            outstanding_debt=float(app.outstanding_debt),
-            monthly_emi_obligation=float(app.monthly_emi_obligation),
-            submitted_at=app.submitted_at,
-            verified_at=app.verified_at,
-            scored_at=app.scored_at,
-            rejection_reason=app.rejection_reason,
-            assets=_asset_out(app.assets),
-            documents=[_document_out(doc) for doc in app.documents],
+def _borrower_app_out(app: Application) -> BorrowerApplicationOut:
+    latest = app.latest_score
+    is_scored = app.status == "scored"
+    return BorrowerApplicationOut(
+        id=app.id,
+        status=app.status,  # type: ignore[arg-type]
+        applicant_name=app.applicant_name,
+        applicant_category=app.applicant_category,  # type: ignore[arg-type]
+        region_tier=app.region_tier,
+        requested_loan_amount=float(app.requested_loan_amount),
+        loan_tenure_months=app.loan_tenure_months,
+        outstanding_debt=float(app.outstanding_debt),
+        monthly_emi_obligation=float(app.monthly_emi_obligation),
+        submitted_at=app.submitted_at,
+        verified_at=app.verified_at,
+        scored_at=app.scored_at,
+        rejection_reason=app.rejection_reason or (latest.decline_reason if latest else None),
+        assets=_asset_out(app.assets),
+        documents=[_document_out(doc) for doc in app.documents],
+        credit_score=latest.credit_score if latest and is_scored else None,
+        risk_tier=latest.risk_tier if latest and is_scored else None,  # type: ignore[arg-type]
+        tier_label=TIER_LABELS.get(latest.risk_tier, latest.risk_tier) if latest and is_scored else None,
+        recommended_limit=float(latest.recommended_limit) if latest and is_scored else None,
+        officer_notes=latest.officer_notes if latest and is_scored else None,
+    )
+
+
+def list_borrower_applications(db: Session, borrower: User) -> list[BorrowerApplicationOut]:
+    applications = (
+        db.execute(
+            select(Application)
+            .options(
+                selectinload(Application.assets),
+                selectinload(Application.documents),
+                selectinload(Application.scores),
+            )
+            .where(Application.borrower_id == borrower.id)
+            .order_by(Application.submitted_at.desc())
         )
-        for app in applications
-    ]
+        .scalars()
+        .all()
+    )
+    return [_borrower_app_out(app) for app in applications]
 
 
 def get_borrower_application(db: Session, borrower: User, app_id: str) -> BorrowerApplicationOut:
     application = _owned_application(db, borrower, app_id)
-    return BorrowerApplicationOut(
-        id=application.id,
-        status=application.status,  # type: ignore[arg-type]
-        applicant_name=application.applicant_name,
-        applicant_category=application.applicant_category,  # type: ignore[arg-type]
-        region_tier=application.region_tier,
-        requested_loan_amount=float(application.requested_loan_amount),
-        loan_tenure_months=application.loan_tenure_months,
-        outstanding_debt=float(application.outstanding_debt),
-        monthly_emi_obligation=float(application.monthly_emi_obligation),
-        submitted_at=application.submitted_at,
-        verified_at=application.verified_at,
-        scored_at=application.scored_at,
-        rejection_reason=application.rejection_reason,
-        assets=_asset_out(application.assets),
-        documents=[_document_out(doc) for doc in application.documents],
-    )
+    return _borrower_app_out(application)
 
 
 def add_documents(

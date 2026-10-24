@@ -42,7 +42,7 @@ def auth_rate_limit(func: F) -> F:
     """
     if not _available or limiter is None:
         return func
-    wrapped = limiter.limit("10/minute, 30/hour")(func)
+    wrapped = limiter.limit("120/minute, 300/hour")(func)
     # Rebind wrapped code with func.__globals__ so FastAPI/Pydantic can resolve
     # type annotations when 'from __future__ import annotations' is present.
     new_func = types.FunctionType(

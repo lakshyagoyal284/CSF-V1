@@ -403,11 +403,7 @@ class AssetDeclarationOut(BaseModel):
 
 
 class BorrowerApplicationOut(BaseModel):
-    """What a borrower may see: status and evidence, never a score.
-
-    There is deliberately no credit_score / risk_tier / recommended_limit field
-    in this model. Applicants cannot view or execute the model.
-    """
+    """What a borrower may see: status, evidence, and when evaluated/approved, the score and officer notes."""
 
     id: str
     status: ApplicationStatus
@@ -424,6 +420,11 @@ class BorrowerApplicationOut(BaseModel):
     rejection_reason: str | None = None
     assets: AssetDeclarationOut | None = None
     documents: list[DocumentOut] = Field(default_factory=list)
+    credit_score: int | None = None
+    risk_tier: RiskTier | None = None
+    tier_label: str | None = None
+    recommended_limit: float | None = None
+    officer_notes: str | None = None
 
 
 class ScoreResultOut(BaseModel):

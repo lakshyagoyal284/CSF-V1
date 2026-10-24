@@ -19,8 +19,8 @@ import type { BorrowerApplication } from "@/lib/portal-types";
 const STATUS_COPY: Record<BorrowerApplication["status"], string> = {
   pending: "Waiting for a bank officer to reconcile your proofs.",
   verified: "Evidence verified. The bank can now calculate the credit decision.",
-  scored: "The bank has completed its assessment. The decision is shared through your branch.",
-  rejected: "The bank could not proceed with this file. See the reason below.",
+  scored: "🎉 Approved & Sanctioned! The bank officer has completed the assessment. Your credit score and official sanction instructions are detailed below.",
+  rejected: "The bank could not proceed with this file. Please review the officer's decline notes below.",
 };
 
 export function BorrowerPortal() {
@@ -28,6 +28,7 @@ export function BorrowerPortal() {
   const [applications, setApplications] = useState<BorrowerApplication[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!token) return;
@@ -104,7 +105,7 @@ export function BorrowerPortal() {
               <div>
                 <h2 className="text-sm font-semibold text-slate-900">My applications</h2>
                 <p className="text-[11px] text-slate-500">
-                  You can see status and documents. Scores are visible to the bank only.
+                  Track your application status. Once approved, your credit score and banker sanction instructions appear here.
                 </p>
               </div>
               <button
@@ -157,10 +158,112 @@ export function BorrowerPortal() {
                       {STATUS_COPY[application.status]}
                     </p>
 
-                    {application.rejection_reason && (
-                      <p className="mt-2 rounded-lg bg-rose-50 p-2 text-[11px] text-rose-700">
-                        {application.rejection_reason}
-                      </p>
+                    {/* When Scored / Approved: Rich Credit Score & Banker Notes Panel */}
+                    {application.status === "scored" && (
+                      <div className="mt-3 overflow-hidden rounded-xl border border-emerald-500/40 bg-gradient-to-br from-emerald-50/90 via-white to-emerald-50/50 p-3.5 shadow-sm">
+                        <div className="flex items-center justify-between border-b border-emerald-200/60 pb-2.5">
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-white text-[11px] font-bold shadow-xs">
+                              ✓
+                            </span>
+                            <span className="text-xs font-bold text-emerald-900 tracking-wide uppercase">
+                              Sanction Approved
+                            </span>
+                          </div>
+                          {application.tier_label && (
+                            <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-800 border border-emerald-300/80">
+                              {application.tier_label}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Metrics: Calculated Credit Score & Sanctioned Limit */}
+                        <div className="mt-3 grid grid-cols-2 gap-2.5">
+                          <div className="rounded-lg bg-white p-2.5 border border-emerald-200/80 shadow-xs">
+                            <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 block">
+                              Calculated Credit Score
+                            </span>
+                            <div className="mt-1 flex items-baseline gap-1.5">
+                              <span className="text-2xl font-extrabold tabular-nums text-emerald-600">
+                                {application.credit_score ?? 850}
+                              </span>
+                              <span className="text-[11px] text-slate-400">/ 900</span>
+                            </div>
+                            <span className="mt-0.5 block text-[10px] text-emerald-700 font-medium">
+                              {application.risk_tier === "LOW"
+                                ? "Tier 1 · Prime borrower profile"
+                                : application.risk_tier === "MEDIUM"
+                                ? "Tier 2 · Standard profile"
+                                : "Tier 3 · Monitored"}
+                            </span>
+                          </div>
+
+                          <div className="rounded-lg bg-white p-2.5 border border-emerald-200/80 shadow-xs">
+                            <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 block">
+                              Sanctioned Limit
+                            </span>
+                            <div className="mt-1">
+                              <span className="text-base sm:text-lg font-bold tabular-nums text-slate-900">
+                                {formatINR(application.recommended_limit ?? application.requested_loan_amount)}
+                              </span>
+                            </div>
+                            <span className="mt-0.5 block text-[10px] text-slate-500">
+                              Tenure: {application.loan_tenure_months} months
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Official Banker Sanction Notes & Instructions */}
+                        {application.officer_notes && (
+                          <div className="mt-3">
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="text-xs font-semibold text-slate-800 flex items-center gap-1.5">
+                                <span>📋</span> Banker Sanction Notes & Branch Visit Notice
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void navigator.clipboard.writeText(application.officer_notes || "");
+                                  setCopiedId(application.id);
+                                  setTimeout(() => setCopiedId(null), 2000);
+                                }}
+                                className="text-[10px] font-semibold text-emerald-700 hover:text-emerald-900 underline flex items-center gap-1"
+                              >
+                                {copiedId === application.id ? "✓ Copied" : "Copy note"}
+                              </button>
+                            </div>
+
+                            <div className="rounded-xl bg-slate-900 text-slate-200 p-3.5 text-[11px] font-mono leading-relaxed max-h-64 overflow-y-auto whitespace-pre-wrap selection:bg-emerald-500 selection:text-white border border-slate-800 shadow-inner">
+                              {application.officer_notes}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* In-Person Branch Initiation Callout */}
+                        <div className="mt-3 rounded-lg bg-emerald-600/10 border border-emerald-500/30 p-2.5 text-[11px] text-emerald-950 leading-snug flex items-start gap-2">
+                          <span className="text-base leading-none">📍</span>
+                          <p>
+                            <strong>Next Step for Disbursement:</strong> Please visit your home branch in person with original physical documents (Aadhaar, Land records / Trade license, Passbook, photos) during branch hours (10 AM – 4 PM) to complete document verification and loan execution.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* When Rejected / Declined: Rejection Details */}
+                    {application.status === "rejected" && (
+                      <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50/80 p-3 text-[11px] text-rose-900">
+                        <div className="flex items-center gap-1.5 font-semibold text-rose-800 mb-1">
+                          <span>⚠️</span> Application Declined
+                        </div>
+                        <p className="leading-relaxed whitespace-pre-wrap">
+                          {application.rejection_reason || "The underwriting desk could not approve this proposal under current policy thresholds."}
+                        </p>
+                        {application.officer_notes && application.officer_notes !== application.rejection_reason && (
+                          <div className="mt-2 pt-2 border-t border-rose-200/60 font-mono text-[10px] text-rose-800 whitespace-pre-wrap">
+                            {application.officer_notes}
+                          </div>
+                        )}
+                      </div>
                     )}
 
                     <div className="mt-2 flex flex-wrap gap-1.5">

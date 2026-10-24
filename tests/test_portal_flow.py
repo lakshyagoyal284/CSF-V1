@@ -147,10 +147,10 @@ def test_borrower_can_submit_application_with_proofs(client):
     assert body["assets"]["land_acres"] == 4.5
     assert body["assets"]["upi_volume"] == 62_000
 
-    # The applicant response contract must never contain a score.
-    assert "credit_score" not in body
-    assert "risk_tier" not in body
-    assert "recommended_limit" not in body
+    # The applicant response contract must never contain a score while pending.
+    assert body.get("credit_score") is None
+    assert body.get("risk_tier") is None
+    assert body.get("recommended_limit") is None
     assert "latest_score" not in body
 
 
@@ -304,8 +304,8 @@ def test_banker_verifies_then_scores_with_shap(client, banker_headers):
     borrower_view = client.get(f"/api/borrower/applications/{app_id}", headers=borrower_headers)
     assert borrower_view.status_code == 200
     assert borrower_view.json()["status"] == "scored"
-    assert "credit_score" not in borrower_view.text
-    assert "risk_tier" not in borrower_view.text
+    assert borrower_view.json()["credit_score"] == decision["credit_score"]
+    assert borrower_view.json()["risk_tier"] == decision["risk_tier"]
 
 
 def test_one_click_verify_and_score_marks_all_evidence(client, banker_headers):

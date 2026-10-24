@@ -114,6 +114,11 @@ export interface BorrowerApplication {
   rejection_reason: string | null;
   assets: AssetDeclaration | null;
   documents: DocumentProof[];
+  credit_score?: number | null;
+  risk_tier?: RiskTier | null;
+  tier_label?: string | null;
+  recommended_limit?: number | null;
+  officer_notes?: string | null;
 }
 
 export interface BankerApplicationSummary {
