@@ -106,11 +106,11 @@ export function PortalHeader({
                 </div>
                 <button
                   type="button"
-                  onClick={() => {
-                    logout();
+                  onClick={async () => {
+                    await logout();
                     router.replace("/");
                   }}
-                  className="rounded-full bg-slate-700 px-2.5 py-1 text-[11px] font-medium text-slate-200 transition hover:bg-slate-600"
+                  className="rounded-full bg-slate-700 px-2.5 py-1 text-[11px] font-medium text-slate-200 transition hover:bg-slate-600 active:scale-95"
                 >
                   Sign out
                 </button>

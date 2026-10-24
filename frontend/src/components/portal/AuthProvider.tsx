@@ -11,6 +11,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
+import { AuthTransitionOverlay, type TransitionState } from "@/components/portal/AuthTransitionOverlay";
 import { portalApi } from "@/lib/portal-api";
 import type { AuthResponse, PortalUser, Role } from "@/lib/portal-types";
 
@@ -22,6 +23,7 @@ interface AuthContextValue {
   user: PortalUser | null;
   token: string | null;
   status: AuthStatus;
+  transition: TransitionState | null;
   login: (email: string, password: string) => Promise<PortalUser>;
   register: (input: {
     email: string;
@@ -29,7 +31,7 @@ interface AuthContextValue {
     full_name: string;
     phone?: string;
   }) => Promise<PortalUser>;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -79,6 +81,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>(
     initialSession ? "loading" : "anonymous",
   );
+  const [transition, setTransition] = useState<TransitionState | null>(null);
 
   useEffect(() => {
     const stored = readStoredSession();
@@ -106,39 +109,74 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const applySession = useCallback((response: AuthResponse) => {
-    setUser(response.user);
-    setToken(response.access_token);
-    storeSession({ token: response.access_token, user: response.user });
-    setStatus("authenticated");
-    return response.user;
-  }, []);
-
   const login = useCallback(
-    async (email: string, password: string) => applySession(await portalApi.login(email, password)),
-    [applySession],
+    async (email: string, password: string) => {
+      const response = await portalApi.login(email, password);
+      // Initiate sleek transition sequence
+      setTransition({
+        active: true,
+        type: "login",
+        role: response.user.role,
+        name: response.user.full_name,
+      });
+      storeSession({ token: response.access_token, user: response.user });
+      setUser(response.user);
+      setToken(response.access_token);
+      setStatus("authenticated");
+      // Allow stepped loading animation to progress before resolving navigation
+      await new Promise((resolve) => setTimeout(resolve, 1150));
+      setTimeout(() => setTransition(null), 500);
+      return response.user;
+    },
+    [],
   );
 
   const register = useCallback(
-    async (input: { email: string; password: string; full_name: string; phone?: string }) =>
-      applySession(await portalApi.register(input)),
-    [applySession],
+    async (input: { email: string; password: string; full_name: string; phone?: string }) => {
+      const response = await portalApi.register(input);
+      setTransition({
+        active: true,
+        type: "register",
+        role: response.user.role,
+        name: response.user.full_name,
+      });
+      storeSession({ token: response.access_token, user: response.user });
+      setUser(response.user);
+      setToken(response.access_token);
+      setStatus("authenticated");
+      await new Promise((resolve) => setTimeout(resolve, 1150));
+      setTimeout(() => setTransition(null), 500);
+      return response.user;
+    },
+    [],
   );
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    setTransition({
+      active: true,
+      type: "logout",
+    });
     portalApi.logout();
     storeSession(null);
     setUser(null);
     setToken(null);
     setStatus("anonymous");
+    // Play full exit sequence before clearing overlay
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    setTransition(null);
   }, []);
 
   const value = useMemo(
-    () => ({ user, token, status, login, register, logout }),
-    [user, token, status, login, register, logout],
+    () => ({ user, token, status, transition, login, register, logout }),
+    [user, token, status, transition, login, register, logout],
   );
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+      {transition?.active && <AuthTransitionOverlay transition={transition} />}
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth(): AuthContextValue {
