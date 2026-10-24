@@ -22,8 +22,11 @@ same code path serves both the shipped model and any future challenger.
 
 from __future__ import annotations
 
+import logging
 import math
 from typing import Any, Iterable, Mapping
+
+logger = logging.getLogger(__name__)
 
 import numpy as np
 import pandas as pd
@@ -348,8 +351,8 @@ class CreditExplainer:
             try:
                 mean_p = float(np.mean(self._model.predict_proba(self._background)[:, 1]))
                 return math.log(max(mean_p, 1e-6) / max(1.0 - mean_p, 1e-6))
-            except Exception:
-                pass
+            except (ValueError, TypeError, AttributeError, IndexError) as exc:
+                logger.debug("Background prediction base value fallback triggered: %s", exc)
         return 0.0
 
     def _display_value(

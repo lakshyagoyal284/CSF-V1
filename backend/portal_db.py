@@ -106,7 +106,8 @@ def get_engine() -> Engine:
 
 def get_session_factory() -> sessionmaker[Session]:
     get_engine()
-    assert _session_factory is not None
+    if _session_factory is None:
+        raise RuntimeError("Database session factory has not been initialized.")
     return _session_factory
 
 
