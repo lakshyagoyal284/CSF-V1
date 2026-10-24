@@ -630,22 +630,6 @@ export function BankerUnderwritingDashboard() {
                             Tick each value reconciled against a proof.
                           </p>
                         </div>
-                        <button
-                          type="button"
-                          data-testid="select-all-fields"
-                          onClick={() =>
-                            setSelectedFields(
-                              declaredFields.every((field) => selectedFields.has(field.key))
-                                ? new Set()
-                                : new Set(declaredFields.map((field) => field.key)),
-                            )
-                          }
-                          className="rounded-md border border-slate-200 px-2 py-1 text-[10px] font-medium text-slate-600 transition hover:bg-slate-50"
-                        >
-                          {declaredFields.every((field) => selectedFields.has(field.key))
-                            ? "Clear all"
-                            : "Select all"}
-                        </button>
                       </div>
 
                       {declaredFields.length === 0 ? (
@@ -661,9 +645,10 @@ export function BankerUnderwritingDashboard() {
                                 <label className="flex cursor-pointer items-center gap-2 py-1.5">
                                   <input
                                     type="checkbox"
+                                    data-testid={`verify-field-${field.key}`}
                                     checked={selectedFields.has(field.key)}
                                     onChange={() => toggleField(field.key)}
-                                    className="h-3.5 w-3.5 rounded border-slate-300 text-emerald-600"
+                                    className="h-3.5 w-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
                                   />
                                   <span className="flex-1 text-[11px] text-slate-600">
                                     {field.label}

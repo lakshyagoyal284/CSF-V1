@@ -102,7 +102,7 @@ try {
 
   await page.waitForSelector('[data-testid="load-demo"]');
   await domClick(page, '[data-testid="load-demo"]');
-  await page.waitForSelector('[data-testid="select-all-fields"]', { timeout: 30000 });
+  await page.waitForSelector('[data-testid^="verify-field-"]', { timeout: 30000 });
   await waitText(page, "Ramesh Yadav");
   check("Demo application loads with declarations", true);
 
@@ -128,7 +128,10 @@ try {
     });
   }
 
-  await domClick(page, '[data-testid="select-all-fields"]');
+  const fieldBoxes = await page.$$('[data-testid^="verify-field-"]');
+  for (const box of fieldBoxes) {
+    await box.click();
+  }
   const docIds = await page.$$eval('[data-testid^="verify-doc-"]', (elements) =>
     elements.map((element) => element.getAttribute("data-testid")),
   );
