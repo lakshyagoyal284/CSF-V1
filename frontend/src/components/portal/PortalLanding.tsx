@@ -15,8 +15,8 @@ const DEMO_ACCOUNTS = [
   {
     label: "Bank officer",
     email: "banker@agritrust.ai",
-    password: "",
-    detail: "Provision via bootstrap script",
+    password: "Banker@123",
+    detail: "Verify evidence and run scorecard",
   },
   {
     label: "Farmer",

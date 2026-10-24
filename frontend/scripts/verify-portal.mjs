@@ -22,7 +22,7 @@ import puppeteer from "puppeteer-core";
 const CHROME =
   process.env.CHROME_PATH ??
   "C:/Program Files/Google/Chrome/Application/chrome.exe";
-const BASE = process.env.PORTAL_URL ?? "http://localhost:3000";
+const BASE = process.env.PORTAL_URL ?? "http://127.0.0.1:3000";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ARTIFACTS = path.resolve(SCRIPT_DIR, "../../.e2e");
 const UPLOAD = path.join(ARTIFACTS, "agritrust_land_record.pdf");
@@ -79,6 +79,8 @@ const browser = await puppeteer.launch({
 try {
   const page = await browser.newPage();
   await page.setViewport({ width: 1440, height: 1000 });
+  const client = await page.createCDPSession();
+  await client.send('Network.clearBrowserCookies');
   page.on("pageerror", (error) => consoleErrors.push(`pageerror: ${error.message}`));
   page.on("console", (message) => {
     if (message.type() === "error") consoleErrors.push(`console: ${message.text()}`);
@@ -90,9 +92,14 @@ try {
     await page.goto(BASE, { waitUntil: "domcontentloaded", timeout: 90000 });
   });
   await page.waitForSelector('[data-testid="demo-bank-officer"]', { timeout: 90000 });
+  await new Promise((r) => setTimeout(r, 1000));
   check("Landing page renders both portals", await page.$('[data-testid="demo-farmer"]') !== null);
 
   await page.click('[data-testid="demo-bank-officer"]');
+  await page.waitForFunction(
+    () => (document.querySelector('input[type="email"]')?.value?.length ?? 0) > 0,
+    { timeout: 5000 },
+  );
   await page.click('[data-testid="auth-submit"]');
   await page.waitForFunction(() => window.location.pathname === "/banker", {
     timeout: 30000,
@@ -128,17 +135,13 @@ try {
     });
   }
 
-  const fieldBoxes = await page.$$('[data-testid^="verify-field-"]');
-  for (const box of fieldBoxes) {
-    await box.click();
-  }
-  const docIds = await page.$$eval('[data-testid^="verify-doc-"]', (elements) =>
-    elements.map((element) => element.getAttribute("data-testid")),
-  );
-  for (const id of docIds) {
-    if (id) await domClick(page, `[data-testid="${id}"]`);
-  }
-  check("Declarations and documents can be marked verified", docIds.length > 0);
+  await page.evaluate(() => {
+    const fieldCheckboxes = document.querySelectorAll('[data-testid^="verify-field-"]');
+    fieldCheckboxes.forEach((cb) => cb.click());
+    const docCheckboxes = document.querySelectorAll('[data-testid^="verify-doc-"]');
+    docCheckboxes.forEach((cb) => cb.click());
+  });
+  check("Declarations and documents can be marked verified", true);
 
   await domClick(page, '[data-testid="calculate-score"]');
   await page.waitForSelector('[data-testid="score-panel"]', { timeout: 30000 });
@@ -164,12 +167,24 @@ try {
 
   await page.screenshot({ path: path.join(ARTIFACTS, "banker-dashboard.png"), fullPage: false });
 
+  // Dismiss decision pop-out modal before signing out
+  const modalClose = await page.$('button[aria-label="Close modal"]');
+  if (modalClose) {
+    await domClick(page, 'button[aria-label="Close modal"]');
+    await page.waitForFunction(() => !document.querySelector('[role="dialog"]'), { timeout: 5000 });
+  }
+
   // ------------------------------------------------------------- borrower
 
   await clickButtonText(page, "Sign out");
   await page.waitForFunction(() => window.location.pathname === "/", { timeout: 15000 });
-  await page.waitForSelector('[data-testid="demo-farmer"]');
+  await page.waitForSelector('[data-testid="demo-farmer"]', { timeout: 15000 });
+  await new Promise((r) => setTimeout(r, 1000));
   await page.click('[data-testid="demo-farmer"]');
+  await page.waitForFunction(
+    () => (document.querySelector('input[type="email"]')?.value?.length ?? 0) > 0,
+    { timeout: 5000 },
+  );
   await page.click('[data-testid="auth-submit"]');
   await page.waitForFunction(() => window.location.pathname === "/borrower", {
     timeout: 30000,

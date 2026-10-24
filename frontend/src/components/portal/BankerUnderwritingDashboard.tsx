@@ -23,6 +23,12 @@ import {
   Spinner,
   StatusBadge,
 } from "@/components/portal/PortalShell";
+import {
+  BankerDecisionModal,
+  type DecisionModalView,
+  type DeclineDecisionParams,
+  type AcceptDecisionParams,
+} from "@/components/portal/BankerDecisionModal";
 import { ShapFactorList } from "@/components/portal/ShapFactorList";
 import { RiskTierBadge } from "@/components/RiskTierBadge";
 import { ScoreDial } from "@/components/ScoreDial";
@@ -109,6 +115,122 @@ export function BankerUnderwritingDashboard() {
   const [declining, setDeclining] = useState(false);
   const [declineReason, setDeclineReason] = useState("");
   const [declineBusy, setDeclineBusy] = useState(false);
+  const [decisionModalView, setDecisionModalView] = useState<DecisionModalView>("none");
+  const [holdSecondsLeft, setHoldSecondsLeft] = useState<number | null>(null);
+  const [decisionActionBusy, setDecisionActionBusy] = useState(false);
+  const [decisionSuccessNotice, setDecisionSuccessNotice] = useState<string | null>(null);
+  const [recheckNotice, setRecheckNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (holdSecondsLeft === null) return;
+    if (holdSecondsLeft <= 0) {
+      setHoldSecondsLeft(null);
+      setDecisionModalView("gateway");
+      return;
+    }
+    const timer = setInterval(() => {
+      setHoldSecondsLeft((prev) => (prev !== null ? prev - 1 : null));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [holdSecondsLeft]);
+
+  const handleRecheck = () => {
+    setDecisionModalView("none");
+    setSelectedFields(new Set());
+    setSelectedDocs(new Set());
+    setRecheckNotice(
+      "🔄 Recheck Active: All verified declaration and document checkmarks have been reset. Please manually verify all data again before recalculating.",
+    );
+  };
+
+  const handleHold = () => {
+    setDecisionModalView("none");
+    setHoldSecondsLeft(15);
+  };
+
+  const resumeDecisionNow = () => {
+    setHoldSecondsLeft(null);
+    setDecisionModalView("gateway");
+  };
+
+  const dismissHold = () => {
+    setHoldSecondsLeft(null);
+  };
+
+  const handleConfirmDecline = async (params: DeclineDecisionParams) => {
+    if (!token || !detail) return;
+    setDecisionActionBusy(true);
+    setError(null);
+    try {
+      const fullReason = [
+        `DECLINE CATEGORY: ${params.categoryLabel}`,
+        params.adverseFactors.length > 0 ? `ADVERSE FACTORS: ${params.adverseFactors.join("; ")}` : "",
+        `POLICY BASIS: ${params.policyRef}`,
+        `OFFICER REMARKS: ${params.narrative}`,
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+
+      await portalApi.verifyAndScore(token, detail.id, {
+        verified_fields: [...selectedFields],
+        document_ids: [...selectedDocs],
+        officer_notes: notes.trim() ? `${notes.trim()}\n\n${fullReason}` : fullReason,
+        decline_option: "decline",
+        decline_reason: fullReason,
+      });
+
+      await loadDetail(detail.id);
+      if (filter === "all") await loadQueue("all");
+      else setFilter("all");
+
+      setDecisionModalView("none");
+      setDecisionSuccessNotice(
+        `Application formally declined. Decline category (${params.categoryLabel}) and statutory reason recorded.`,
+      );
+    } catch (caught) {
+      handleApiError(caught);
+    } finally {
+      setDecisionActionBusy(false);
+    }
+  };
+
+  const handleConfirmAccept = async (params: AcceptDecisionParams) => {
+    if (!token || !detail) return;
+    setDecisionActionBusy(true);
+    setError(null);
+    try {
+      const fullSanctionRecord = [
+        `=== IN-PRINCIPLE CREDIT SANCTION & APPROVAL ===`,
+        `Sanctioned Loan Facility: ${params.facilityScheme}`,
+        `Approved Amount: ₹${params.sanctionAmount.toLocaleString("en-IN")}`,
+        `Annual Interest Rate: ${params.interestRate}% p.a.`,
+        `Repayment Tenure: ${params.tenureMonths} Months`,
+        `Underwriter Approval Justification: ${params.approvalRationale}`,
+        ``,
+        `=== OFFICIAL INSTRUCTIONS NOTE FOR BORROWER ===`,
+        params.borrowerNote,
+      ].join("\n");
+
+      await portalApi.verifyAndScore(token, detail.id, {
+        verified_fields: [...selectedFields],
+        document_ids: [...selectedDocs],
+        officer_notes: fullSanctionRecord,
+      });
+
+      await loadDetail(detail.id);
+      if (filter === "all") await loadQueue("all");
+      else setFilter("all");
+
+      setDecisionModalView("none");
+      setDecisionSuccessNotice(
+        `✅ Credit facility of ₹${params.sanctionAmount.toLocaleString("en-IN")} sanctioned! Official note and branch instructions recorded for ${detail.applicant_name}.`,
+      );
+    } catch (caught) {
+      handleApiError(caught);
+    } finally {
+      setDecisionActionBusy(false);
+    }
+  };
 
   const handleApiError = useCallback(
     (caught: unknown) => {
@@ -289,6 +411,9 @@ export function BankerUnderwritingDashboard() {
       // the decision the officer just produced stays on screen.
       if (filter === "all") await loadQueue("all");
       else setFilter("all");
+
+      // Open the Decision Gateway Pop-out modal immediately upon score calculation!
+      setDecisionModalView("gateway");
     } catch (caught) {
       handleApiError(caught);
     } finally {
@@ -500,6 +625,10 @@ export function BankerUnderwritingDashboard() {
                           onClick={() => {
                             setLoadingDetail(true);
                             setSelectedId(item.id);
+                            setDecisionModalView("none");
+                            setHoldSecondsLeft(null);
+                            setRecheckNotice(null);
+                            setDecisionSuccessNotice(null);
                           }}
                           className={`cursor-pointer transition ${
                             selectedId === item.id
@@ -566,6 +695,62 @@ export function BankerUnderwritingDashboard() {
               </div>
             ) : (
               <div className="space-y-3">
+                {/* Recheck Active Notice */}
+                {recheckNotice && (
+                  <div
+                    data-testid="recheck-active-notice"
+                    className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-amber-900 shadow-sm flex items-start justify-between gap-3 animate-in fade-in"
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <span className="text-xl">🔄</span>
+                      <div>
+                        <p className="text-xs font-bold uppercase tracking-wider text-amber-800">
+                          Manual Recheck Mode Active
+                        </p>
+                        <p className="text-xs text-amber-900/90 mt-0.5 leading-relaxed">
+                          All declaration and document approvals have been reset. Please manually verify
+                          each declared asset and uploaded proof below before recalculating the credit
+                          score.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setRecheckNotice(null)}
+                      className="text-xs font-semibold text-amber-700 hover:text-amber-950 shrink-0"
+                    >
+                      ✕ Dismiss
+                    </button>
+                  </div>
+                )}
+
+                {/* Decision Success Notice */}
+                {decisionSuccessNotice && (
+                  <div
+                    data-testid="decision-success-notice"
+                    className="rounded-2xl border border-emerald-300 bg-emerald-50 p-4 text-emerald-950 shadow-sm flex items-start justify-between gap-3 animate-in fade-in"
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <span className="text-xl">🎉</span>
+                      <div>
+                        <p className="text-xs font-bold uppercase tracking-wider text-emerald-800">
+                          Underwriting Decision Recorded
+                        </p>
+                        <p className="text-xs text-emerald-900 mt-0.5 leading-relaxed">
+                          {decisionSuccessNotice}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setDecisionSuccessNotice(null)}
+                      className="text-xs font-semibold text-emerald-700 hover:text-emerald-950 shrink-0"
+                    >
+                      ✕ Dismiss
+                    </button>
+                  </div>
+                )}
+
                 {/* file header */}
                 <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                   <div className="flex flex-wrap items-start justify-between gap-3">
@@ -801,6 +986,28 @@ export function BankerUnderwritingDashboard() {
                         {latest && (
                           <button
                             type="button"
+                            onClick={() => setDecisionModalView("gateway")}
+                            data-testid="decision-actions-button"
+                            className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-indigo-500 shadow-sm"
+                            title="Open Decision Gateway (Recheck, Hold, Decline, Accept & Send)"
+                          >
+                            Decision actions ⚡
+                          </button>
+                        )}
+                        {latest && (
+                          <button
+                            type="button"
+                            onClick={() => setDecisionModalView("accept")}
+                            data-testid="accept-and-send-button"
+                            className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-100"
+                            title="Sanction credit facility and issue official borrower note"
+                          >
+                            Accept & Send
+                          </button>
+                        )}
+                        {latest && (
+                          <button
+                            type="button"
                             onClick={() => void downloadLetter()}
                             disabled={busy}
                             data-testid="download-decision-letter"
@@ -822,7 +1029,8 @@ export function BankerUnderwritingDashboard() {
                         {latest && (
                           <button
                             type="button"
-                            onClick={() => void startDecline()}
+                            onClick={() => setDecisionModalView("decline")}
+                            data-testid="decline-button"
                             className="rounded-lg border border-rose-200 px-3 py-2 text-xs font-medium text-rose-700 transition hover:bg-rose-50"
                           >
                             Decline
@@ -966,6 +1174,61 @@ export function BankerUnderwritingDashboard() {
       {preview && token && (
         <DocumentPreviewModal token={token} document={preview} onClose={() => setPreview(null)} />
       )}
+
+      {/* Floating Hold Countdown Pill */}
+      {holdSecondsLeft !== null && (
+        <div
+          data-testid="hold-floating-banner"
+          className="fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-2xl border border-sky-400/40 bg-slate-900/95 px-5 py-3.5 text-white shadow-2xl backdrop-blur-md animate-in slide-in-from-bottom-4"
+        >
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-500/20 text-sky-300 font-bold border border-sky-500/30">
+            ⏸️
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-sky-100 flex items-center gap-1.5">
+              Decision on Hold
+              <span className="rounded-full bg-sky-500/20 px-2 py-0.5 text-[10px] font-bold text-sky-300 tabular-nums border border-sky-500/30">
+                {holdSecondsLeft}s
+              </span>
+            </p>
+            <p className="text-[11px] text-slate-400">Score remains on screen. Modal reopens automatically.</p>
+          </div>
+          <div className="flex items-center gap-2 ml-2">
+            <button
+              type="button"
+              data-testid="resume-hold-now"
+              onClick={resumeDecisionNow}
+              className="rounded-xl bg-sky-500 px-3 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-sky-400 active:scale-95"
+            >
+              Resume now
+            </button>
+            <button
+              type="button"
+              onClick={dismissHold}
+              className="rounded-xl border border-slate-700 px-2.5 py-1.5 text-xs text-slate-400 hover:text-white transition"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Underwriting Decision Pop-Out Modal */}
+      {detail && latest && (
+        <BankerDecisionModal
+          isOpen={decisionModalView !== "none"}
+          view={decisionModalView}
+          onClose={() => setDecisionModalView("none")}
+          onSelectView={setDecisionModalView}
+          detail={detail}
+          latest={latest}
+          onRecheck={handleRecheck}
+          onHold={handleHold}
+          onConfirmDecline={handleConfirmDecline}
+          onConfirmAccept={handleConfirmAccept}
+          isSubmitting={decisionActionBusy}
+        />
+      )}
     </div>
   );
 }
@@ -1027,6 +1290,28 @@ function ScorePanel({ result }: { result: ScoreResult }) {
             <li key={warning}>• {warning}</li>
           ))}
         </ul>
+      )}
+
+      {result.officer_notes && (
+        <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-[11px]">
+          <p className="font-semibold text-slate-700 uppercase tracking-wide text-[9px] mb-1">
+            Officer Underwriting Record & Sanction Notes
+          </p>
+          <pre className="whitespace-pre-wrap font-sans text-slate-600 leading-relaxed text-[11px]">
+            {result.officer_notes}
+          </pre>
+        </div>
+      )}
+
+      {result.decline_reason && (
+        <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-[11px] text-rose-800">
+          <p className="font-semibold uppercase tracking-wide text-[9px] mb-1 text-rose-700">
+            Adverse Decline Reason Recorded
+          </p>
+          <pre className="whitespace-pre-wrap font-sans leading-relaxed text-[11px]">
+            {result.decline_reason}
+          </pre>
+        </div>
       )}
     </div>
   );

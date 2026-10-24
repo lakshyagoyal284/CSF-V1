@@ -445,6 +445,7 @@ class ScoreResultOut(BaseModel):
     explainability: Explainability
     model_version: str
     generated_at: datetime
+    officer_notes: str | None = None
     decline_option: str | None = None
     decline_reason: str | None = None
 
@@ -555,7 +556,7 @@ class VerifyRequest(BaseModel):
     verified_fields: list[str] = Field(default_factory=list)
     document_ids: list[str] = Field(default_factory=list)
     verify_all: bool = False
-    officer_notes: str | None = Field(default=None, max_length=2_000)
+    officer_notes: str | None = Field(default=None, max_length=5_000)
 
 
 class VerifyAndScoreRequest(VerifyRequest):

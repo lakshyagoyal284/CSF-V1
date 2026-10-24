@@ -232,6 +232,9 @@ def _score_out(result: CreditScoreResult) -> ScoreResultOut:
         explainability=result.shap_explanations_json,  # type: ignore[arg-type]
         model_version=result.model_version,
         generated_at=result.generated_at,
+        officer_notes=result.officer_notes,
+        decline_option=result.decline_option,
+        decline_reason=result.decline_reason,
     )
 
 
@@ -749,8 +752,8 @@ def score_application(
         model_version=response.model_version,
         decided_by=banker.id,
         officer_notes=request.officer_notes,
-        decline_option=getattr(response, "decline_option", None),
-        decline_reason=getattr(response, "decline_reason", None),
+        decline_option=getattr(request, "decline_option", None),
+        decline_reason=getattr(request, "decline_reason", None),
     )
     db.add(result)
 

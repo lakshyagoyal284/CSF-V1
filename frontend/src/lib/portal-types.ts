@@ -164,6 +164,9 @@ export interface ScoreResult {
   explainability: Explainability;
   model_version: string;
   generated_at: string;
+  officer_notes?: string | null;
+  decline_option?: string | null;
+  decline_reason?: string | null;
 }
 
 export interface BankerApplicationDetail extends BankerApplicationSummary {
