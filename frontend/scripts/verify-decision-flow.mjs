@@ -17,7 +17,6 @@ const CHROME =
   "C:/Program Files/Google/Chrome/Application/chrome.exe";
 const BASE = process.env.PORTAL_URL ?? "http://localhost:3000";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const ARTIFACTS = path.resolve(SCRIPT_DIR, "../../.e2e");
 
 const checks = [];
 

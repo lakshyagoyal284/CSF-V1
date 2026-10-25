@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 import { formatINR } from "@/lib/format";
 import type { BankerApplicationDetail, ScoreResult } from "@/lib/portal-types";
 
@@ -180,7 +180,16 @@ export function BankerDecisionModal({
   const [approvalRationale, setApprovalRationale] = useState(
     `Applicant demonstrates strong cash-flow proxy via UPI turnover, verified collateral, and low probability of default (${(latest.probability_of_default * 100).toFixed(1)}%). Recommended for in-principle approval.`,
   );
-  const [borrowerNote, setBorrowerNote] = useState<string>("");
+  const [borrowerNote, setBorrowerNote] = useState<string>(() =>
+    generateDefaultBorrowerNote(
+      detail.applicant_name,
+      detail.applicant_category,
+      defaultSanctionAmount,
+      defaultRate,
+      defaultTenure,
+      defaultScheme,
+    ),
+  );
   const [acceptError, setAcceptError] = useState<string | null>(null);
 
   // Unique IDs for form controls
@@ -193,31 +202,6 @@ export function BankerDecisionModal({
   const facilitySchemeSelectId = useId();
   const approvalRationaleTextareaId = useId();
   const borrowerNoteTextareaId = useId();
-
-  // Initialize borrower note when modal opens or sanction params change initially
-  useEffect(() => {
-    if (view === "accept" && !borrowerNote) {
-      setBorrowerNote(
-        generateDefaultBorrowerNote(
-          detail.applicant_name,
-          detail.applicant_category,
-          sanctionAmount,
-          interestRate,
-          tenureMonths,
-          facilityScheme,
-        ),
-      );
-    }
-  }, [
-    view,
-    borrowerNote,
-    detail.applicant_name,
-    detail.applicant_category,
-    sanctionAmount,
-    interestRate,
-    tenureMonths,
-    facilityScheme,
-  ]);
 
   if (!isOpen || view === "none") return null;
 

@@ -13,7 +13,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 
 import { AuthTransitionOverlay, type TransitionState } from "@/components/portal/AuthTransitionOverlay";
 import { portalApi } from "@/lib/portal-api";
-import type { AuthResponse, PortalUser, Role } from "@/lib/portal-types";
+import type { PortalUser, Role } from "@/lib/portal-types";
 
 const STORAGE_KEY = "agritrust.session";
 

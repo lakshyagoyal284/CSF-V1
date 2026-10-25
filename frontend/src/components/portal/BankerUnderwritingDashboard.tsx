@@ -123,15 +123,18 @@ export function BankerUnderwritingDashboard() {
 
   useEffect(() => {
     if (holdSecondsLeft === null) return;
-    if (holdSecondsLeft <= 0) {
-      setHoldSecondsLeft(null);
-      setDecisionModalView("gateway");
-      return;
-    }
-    const timer = setInterval(() => {
-      setHoldSecondsLeft((prev) => (prev !== null ? prev - 1 : null));
+    const interval = setInterval(() => {
+      setHoldSecondsLeft((prev) => {
+        if (prev === null) return null;
+        if (prev <= 1) {
+          clearInterval(interval);
+          setDecisionModalView("gateway");
+          return null;
+        }
+        return prev - 1;
+      });
     }, 1000);
-    return () => clearInterval(timer);
+    return () => clearInterval(interval);
   }, [holdSecondsLeft]);
 
   const handleRecheck = () => {
@@ -501,8 +504,6 @@ export function BankerUnderwritingDashboard() {
       setDeclineBusy(false);
     }
   };
-
-  const startDecline = () => setDeclining(true);
 
   const loadDemo = async () => {
     if (!token) return;

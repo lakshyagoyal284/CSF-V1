@@ -264,7 +264,9 @@ CREATE TABLE IF NOT EXISTS credit_score_results (
     policy_breakdown        JSONB NOT NULL DEFAULT '{}'::jsonb,
     model_version           VARCHAR(80) NOT NULL,
     decided_by              VARCHAR(36) REFERENCES users (id) ON DELETE SET NULL,
-    officer_notes           TEXT
+    officer_notes           TEXT,
+    decline_option          VARCHAR(32),
+    decline_reason          TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_credit_score_results_app
