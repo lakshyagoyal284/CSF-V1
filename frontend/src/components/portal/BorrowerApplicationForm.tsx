@@ -17,6 +17,7 @@
 import { ChangeEvent, useMemo, useState } from "react";
 
 import { StatusBadge } from "@/components/portal/PortalShell";
+import { DocumentChecklist } from "@/components/portal/DocumentChecklist";
 import { portalApi, PortalApiError } from "@/lib/portal-api";
 import { useAuth } from "@/components/portal/AuthProvider";
 import type {
@@ -213,10 +214,22 @@ export function BorrowerApplicationForm({
     phone: user?.phone ?? "",
   }));
   const [uploads, setUploads] = useState<UploadFileEntry[]>([]);
+  const [checkedDocIds, setCheckedDocIds] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [accepted, setAccepted] = useState(false);
   const [successId, setSuccessId] = useState<string | null>(null);
+
+  const handleToggleDocCheck = (id: string) => {
+    setCheckedDocIds((prev) => ({
+      ...prev,
+      [id]: !prev[id],
+    }));
+  };
+
+  const attachedDocTypes = useMemo(() => {
+    return uploads.map((u) => u.docType);
+  }, [uploads]);
 
   const isFarmer = form.applicant_category === "farmer";
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
@@ -537,11 +550,37 @@ export function BorrowerApplicationForm({
         {step === 3 && (
           <section className="space-y-4">
             <StepHeading
-              title="Document proofs"
-              hint="PDF, PNG, JPEG or WebP up to 10 MB. The banker verifies each declaration against these files."
+              title="Document proofs & checklist"
+              hint="Attach proof files for the bank officer to verify. Review the recommended checklist below — it is an advisory guide to optimize approval odds and does not block you."
             />
 
-            <label className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center transition hover:border-emerald-400 hover:bg-emerald-50/40">
+            {/* Document Checklist with Priority Levels */}
+            <DocumentChecklist
+              applicantCategory={form.applicant_category}
+              checkedIds={checkedDocIds}
+              onToggleCheck={handleToggleDocCheck}
+              attachedDocTypes={attachedDocTypes}
+              attachedFilesCount={uploads.length}
+            />
+
+            <div className="border-t border-slate-100 pt-3">
+              <div className="mb-2.5 flex items-center justify-between">
+                <div>
+                  <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-700">
+                    Upload Your Proof Files
+                  </h4>
+                  <p className="text-[11px] text-slate-500">
+                    PDF, PNG, JPEG or WebP up to 10 MB. At least 1 document required to proceed.
+                  </p>
+                </div>
+                {uploads.length > 0 && (
+                  <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-800">
+                    {uploads.length} attached
+                  </span>
+                )}
+              </div>
+
+              <label className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center transition hover:border-emerald-400 hover:bg-emerald-50/40">
               <span className="text-2xl">⇧</span>
               <span className="mt-2 text-sm font-medium text-slate-700">Attach proof documents</span>
               <span className="mt-1 text-[11px] text-slate-500">
@@ -555,7 +594,8 @@ export function BorrowerApplicationForm({
                 data-testid="doc-upload"
                 className="sr-only"
               />
-            </label>
+              </label>
+            </div>
 
             {uploads.length === 0 ? (
               <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
@@ -679,6 +719,12 @@ export function BorrowerApplicationForm({
               onClick={() => {
                 setForm(DEMO);
                 setErrors([]);
+                setCheckedDocIds({
+                  farmer_land_record: true,
+                  farmer_kyc: true,
+                  farmer_bank_stmt: true,
+                  farmer_utility: true,
+                });
               }}
               className="rounded-lg px-2 py-2 text-xs font-medium text-emerald-700 transition hover:bg-emerald-50"
             >
